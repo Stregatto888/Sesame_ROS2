@@ -11,7 +11,7 @@ piano per ora.
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
 | 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
-| 5 | ESP32 e ponte ROS (`sesame_hardware`) | ⏭️ prossima | |
+| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | ⏭️ prossima | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -338,12 +338,33 @@ ros2 run sesame_locomotion gait_player --ros-args -p table:=$D/trot_cycle.csv
 - Limiti (gradi): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
 - Segnale servo: 50 Hz, impulso 732–2929 µs.
 
-## Prossimo passo: fase 5 — ESP32 e ponte ROS
+## Prossimo passo: fase 5 — ESP32 e ponte ROS con micro-ROS
 
-- Scegliere scheda e trasporto: micro-ROS supporta solo esp32dev (la Lolin S2 Mini no); alternative:
-  componente ESP-IDF oppure ponte seriale/UDP con un protocollo nostro.
-- Firmware (`Sesame_MuHack`, branch `feature/ros-bridge` da `develop`): driver servo non bloccante a
-  50 Hz, limiti per giunto, passo massimo 12° per tick, watchdog 250 ms (senza comandi → si ferma).
+**Decisione (15/11/2026): piano A, micro-ROS sulla Lolin S2 Mini**
+
+- Scheda confermata: Lolin S2 Mini (ESP32-S2, un core, USB nativa).
+- Correzione rispetto alla nota precedente ("micro-ROS supporta solo esp32dev"): vale solo per la
+  libreria Arduino/PlatformIO `micro_ros_platformio`. Il componente ufficiale `micro_ros_espidf_component`
+  è testato su ESP-IDF 5.2–5.5 con ESP32-S2 e ha un esempio di trasporto USB CDC per S2/S3.
+- Alternative valutate e scartate: `micro_ros_platformio` adattato alla S2 (non ufficiale), cambio
+  scheda verso `esp32dev` (ricablaggio), protocollo seriale nostro (non è micro-ROS).
+
+| Conseguenza | Dove | Cosa fare |
+|---|---|---|
+| Build da Arduino puro a ESP-IDF + Arduino come componente | firmware | prova minima, poi migrazione del progetto |
+| USB nativa riservata a micro-ROS | firmware | log su UART a pin o spenti, CLI seriale off in modalità ROS |
+| `setAngle` bloccante (20 ms per servo) e con log su `Serial` | `motors/servo_driver` | driver non bloccante a 50 Hz |
+| Subtrim sommato nel firmware e previsto anche nel plugin | firmware + `sesame_hardware` | applicarlo in un solo punto (proposta: plugin) |
+| Comandi web e comandi ROS sullo stesso robot | `core/tasks`, `command_queue` | una modalità alla volta |
+| RAM limitata (un core, ~320 KB) | firmware | misurare heap/stack con WiFi + web + display |
+| Agente micro-ROS sul PC | `docker/Dockerfile`, container | agente Jazzy e accesso a `/dev/ttyACM*` |
+| Hardware interface verso i topic | `sesame_hardware` | plugin C++ con `hardware:=real` |
+
+**Lavoro della fase**
+
+- Firmware (`Sesame_MuHack`, branch `feature/ros-bridge` da `develop`): task micro-ROS, driver servo
+  non bloccante a 50 Hz, limiti per giunto, passo massimo 12° per tick, watchdog 250 ms (senza comandi
+  → si ferma nella posa corrente), eco degli angoli, riconnessione all'agente.
 - Plugin ros2_control `sesame_hardware` (attivato da `hardware:=real`), ordine giunti firmware e
   conversione `servo = 90 + direzione·(angolo − 90) + subtrim`.
 - Calibrare i subtrim; primo test sempre con il robot sollevato, poi la tabella `docs/gait/trot_cycle.csv`.

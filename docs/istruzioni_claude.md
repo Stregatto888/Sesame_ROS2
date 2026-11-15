@@ -39,7 +39,8 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   raggiungibile) ✅ tag `v0.4-ik`.
 - Fase 4 (trotto in simulazione: IK su (x, z), tabella di un ciclo a 50 Hz, controlli su limiti,
   velocità e passo per tick, riproduzione in RViz) ✅ tag `v0.5-gait`.
-- **Prossima: fase 5, ESP32 e ponte ROS.**
+- **Prossima: fase 5, ESP32 e ponte ROS con micro-ROS** (piano A, scelto il 15/11/2026: componente
+  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC).
 
 ## Struttura
 - `sesame_description`: `urdf/sesame.urdf` (originale, non si modifica), `sesame.urdf.xacro` (radice
@@ -57,7 +58,8 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 - `docs/ik/` (CSV delle verifiche della fase 3), `docs/gait/trot_cycle.csv` (un ciclo di trotto,
   colonne `t_s` + giunti in ordine firmware, gradi) e `docs/gait/gait_planner.txt`.
 - `tools/joint_degrees.py`: `/joint_states` → gradi in ordine firmware e valore servo.
-- Da creare: `sesame_hardware` (fase 5, plugin ros2_control verso l'ESP32).
+- Da creare: `sesame_hardware` (fase 5, plugin ros2_control che parla con l'ESP32 tramite i topic
+  micro-ROS) e il `micro_ros_agent` nel container.
 
 ## Gruppi, giunti, controllori
 | Gruppo | Catena | Giunti | Controllore |
@@ -79,19 +81,43 @@ Pose SRDF: `stand` e `crouch` (ginocchia rientrate di 30°).
   primo test sempre con il robot sollevato.
 
 ## Roadmap rimanente (ogni fase finisce con un controllo verificabile)
-5. **ESP32 e ponte ROS**:
-   - Scheda: `platformio.ini` di Sesame_MuHack è per la **Lolin S2 Mini** (ESP32-S2, da confermare che
-     sia quella montata). micro-ROS non la supporta → protocollo nostro (8 angoli + contatore +
-     checksum a 50 Hz). Proposta: prima **seriale su USB nativa**, poi UDP su WiFi con lo stesso protocollo.
-   - Firmware (branch `feature/ros-bridge` da `develop`): ha già 3 task FreeRTOS (web, display, motori),
-     `core/command_queue`, `motors/servo_driver`, `motors/poses`. Aggiungere un task ponte: ricezione
-     → coda, servo a 50 Hz non bloccanti, limiti, passo massimo 12°/tick, watchdog 250 ms (si ferma
-     nella posa corrente), eco degli angoli comandati.
-   - Plugin ros2_control `sesame_hardware` (C++), attivo con `hardware:=real`: ordine firmware e
-     conversione con direzione/subtrim da `calibration/default.yaml`.
+5. **ESP32 e ponte ROS con micro-ROS (piano A)**:
+   - Scheda: **Lolin S2 Mini** (ESP32-S2, confermata). Scelta: **micro-ROS** con il componente
+     ufficiale `micro_ros_espidf_component` (branch `jazzy`), testato su ESP-IDF 5.2–5.5 con ESP32-S2.
+     Trasporto: **USB CDC nativa** (esempio `int32_publisher_custom_transport_usbcdc`); in seguito UDP
+     su WiFi. La libreria `micro_ros_platformio` (Arduino) supporta ufficialmente solo `esp32dev`: non
+     la usiamo. Scartati: protocollo nostro, cambio scheda.
+   - Conseguenze sul firmware:
+     - Build da Arduino puro a **ESP-IDF con Arduino come componente** (si riusano ESP32Servo, Adafruit,
+       web server). Strumento di build (idf.py in Docker `espressif/idf` oppure PlatformIO con
+       `framework = arduino, espidf`) e versioni da fissare dopo la prova minima (passo 1).
+     - La USB nativa diventa **solo micro-ROS**: niente `Serial` per log e CLI. Log su una UART a pin
+       liberi (adattatore USB-seriale) oppure spenti; la CLI seriale si disattiva in modalità ROS.
+     - Con il firmware TinyUSB il flash richiede la modalità download (tasto 0 + RST) se l'auto-reset
+       non funziona.
+     - Un solo core e ~320 KB di RAM: misurare heap e stack con micro-ROS + AP WiFi + web + display.
+     - Driver servo **non bloccante**: oggi `Motors::setAngle` attende `motorCurrentDelay` (20 ms) per
+       servo e stampa su `Serial` → ~160 ms a fotogramma, incompatibile con 50 Hz.
+     - **Subtrim una sola volta**: oggi il firmware somma `subtrim[]` in `setAngle`; il contratto
+       prevede la conversione nel plugin. Decidere chi la applica (proposta: il plugin, firmware con
+       subtrim a 0 in modalità ROS).
+     - Arbitraggio tra comandi web (`CmdQueue`, pose e andature del firmware) e comandi ROS: una
+       modalità alla volta.
+   - Firmware (branch `feature/ros-bridge` da `develop`): task micro-ROS (executor, sottoscrizione ai
+     comandi, pubblicazione dell'eco), servo a 50 Hz non bloccanti, limiti, passo massimo 12°/tick,
+     watchdog 250 ms senza comandi (si ferma nella posa corrente), riconnessione all'agente.
+     Il controllo d'integrità del protocollo è quello di XRCE-DDS (niente contatore/checksum nostri).
+   - Interfaccia (da fissare al passo 3): topic comandi e topic eco con 8 angoli in ordine firmware,
+     QoS best-effort a 50 Hz; tipo di messaggio standard e leggero (es. `std_msgs/Float32MultiArray`).
+   - PC: `micro_ros_agent` nel container (pacchetto apt Jazzy se disponibile, altrimenti sorgente o
+     immagine `microros/micro-ros-agent:jazzy`); il container deve vedere `/dev/ttyACM*` (probabile
+     `--device`/regola udev, eventualmente ricreare `sesame_gpu`).
+   - Plugin ros2_control `sesame_hardware` (C++), attivo con `hardware:=real`: pubblica i comandi e legge
+     l'eco sui topic micro-ROS, ordine firmware e conversione con direzione/subtrim da
+     `calibration/default.yaml`.
    - Calibrare i subtrim in stand.
-   - Verifica: robot sollevato, stand/crouch da RViz/MoveIt uguali alle pose reali; cavo staccato →
-     fermo entro 250 ms.
+   - Verifica: robot sollevato, stand/crouch da RViz/MoveIt uguali alle pose reali; cavo staccato o
+     agente fermo → fermo entro 250 ms.
 6. **IK sul robot fisico**: stesso launch con `hardware:=real`. Prima sollevato (MoveIt, marker,
    tabella del trotto), poi a terra (stand/crouch, trotto lento ≥ 1 s per ciclo, poi più veloce),
    ritoccando i parametri del trotto se serve.

@@ -1,0 +1,49 @@
+# Controllori di Sesame (ros2_control, ROS 2 Jazzy).
+# Un joint_trajectory_controller per gamba: MoveIt (fase 2) mandera' le
+# traiettorie a questi controllori.
+#   fr = anteriore destra (R1, R3)   rr = posteriore destra (R2, R4)
+#   fl = anteriore sinistra (L1, L3) rl = posteriore sinistra (L2, L4)
+
+controller_manager:
+  ros__parameters:
+    update_rate: 50  # Hz, come il ciclo previsto per i servo
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    fr_leg_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    rr_leg_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    fl_leg_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    rl_leg_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+fr_leg_controller:
+  ros__parameters:
+    joints: [R1, R3]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    allow_nonzero_velocity_at_trajectory_end: true
+
+rr_leg_controller:
+  ros__parameters:
+    joints: [R2, R4]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    allow_nonzero_velocity_at_trajectory_end: true
+
+fl_leg_controller:
+  ros__parameters:
+    joints: [L1, L3]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    allow_nonzero_velocity_at_trajectory_end: true
+
+rl_leg_controller:
+  ros__parameters:
+    joints: [L2, L4]
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    allow_nonzero_velocity_at_trajectory_end: true

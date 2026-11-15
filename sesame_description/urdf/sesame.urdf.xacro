@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  Sesame: descrizione completa per ros2_control e MoveIt.
+
+  Non modifica sesame.urdf: lo include cosi' com'e' e aggiunge
+    1. un link radice fittizio (base_footprint), che toglie l'avviso di
+       kdl_parser sul link "base" con inerzia;
+    2. il blocco <ros2_control> per gli 8 giunti.
+
+  Argomenti:
+    hardware:=mock   giunti simulati (mock_components/GenericSystem)  [default]
+    hardware:=real   riservato alla fase 5 (interfaccia verso l'ESP32)
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="sesame_quadruped">
+
+  <xacro:arg name="hardware" default="mock"/>
+
+  <!-- Radice senza inerzia: KDL non accetta inerzia sul link radice. -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Modello originale (link, giunti, mesh, collisioni, inerzie). -->
+  <xacro:include filename="$(find sesame_description)/urdf/sesame.urdf"/>
+
+  <!-- Interfacce di controllo. -->
+  <xacro:include filename="$(find sesame_description)/urdf/sesame.ros2_control.xacro"/>
+  <xacro:sesame_ros2_control hardware="$(arg hardware)"/>
+
+</robot>

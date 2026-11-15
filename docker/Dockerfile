@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-ros2-control \
       ros-jazzy-ros2-controllers \
       ros-jazzy-xacro \
+      ros-jazzy-moveit \
+      ros-jazzy-pick-ik \
       python3-colcon-common-extensions \
       liburdfdom-tools \
       libgl1-mesa-dri \

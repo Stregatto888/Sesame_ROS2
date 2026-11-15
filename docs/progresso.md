@@ -8,9 +8,9 @@ piano per ora.
 |---|---|---|---|
 | 0 | Git, licenza, crediti | ✅ fatta | `v0.1-rviz` |
 | 1 | xacro + ros2_control con hardware finto | ✅ fatta | `v0.2-control` |
-| 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` (dopo il merge) |
-| 3 | IK verificata (andata e ritorno, marker) | ⏭️ prossima | `v0.4-ik` |
-| 4 | Andatura in simulazione | da fare | |
+| 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
+| 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
+| 4 | Andatura in simulazione | ⏭️ prossima | |
 | 5 | ESP32 e ponte ROS (`sesame_hardware`) | da fare | |
 | 6 | IK sul robot fisico | da fare | |
 
@@ -65,8 +65,7 @@ piano per ora.
 
 **Installazione**
 
-- Nel container: `ros-jazzy-moveit` e `ros-jazzy-pick-ik` (da aggiungere anche al `docker/Dockerfile`,
-  se non è già stato fatto).
+- Nel container: `ros-jazzy-moveit` e `ros-jazzy-pick-ik` (aggiunti al `docker/Dockerfile` in fase 3).
 
 **Setup Assistant** (`ros2 launch moveit_setup_assistant setup_assistant.launch.py`)
 
@@ -124,10 +123,10 @@ piano per ora.
 | Avvisi `Overrun detected` del controller_manager | macchina carica durante il Setup Assistant | innocui con l'hardware finto; un solo launch alla volta |
 | File di root nel repo | generati dal container | `sudo chown -R $USER:$USER .` dall'host |
 
-**Da chiudere**
+**Chiusura**
 
-- Commit su `feature/moveit-config`, merge in `main`, tag `v0.3-moveit`.
-- `ros-jazzy-moveit` e `ros-jazzy-pick-ik` nel `docker/Dockerfile`.
+- Merge di `feature/moveit-config` in `main`, tag `v0.3-moveit`.
+- `ros-jazzy-moveit` e `ros-jazzy-pick-ik` nel `docker/Dockerfile`: fatto nel branch della fase 3.
 
 **Come avviare**
 
@@ -146,6 +145,81 @@ ros2 launch sesame_bringup moveit.launch.py      # MoveIt + controllori + RViz
 
 ---
 
+## Fase 3 — IK verificata (15/11/2026)
+
+**File nuovi**
+
+- `sesame_locomotion/` (pacchetto Python, `ament_python`), riusato in fase 4:
+  - `sesame_locomotion/ik_roundtrip.py` (`ros2 run sesame_locomotion ik_roundtrip`): per ogni gamba
+    angoli casuali nei limiti (margine 5°) → `/compute_fk` → `/compute_ik` con seme crouch → FK della
+    soluzione → errore di posizione del piede. Parametri `samples`, `margin_deg`, `tolerance_mm`,
+    `avoid_collisions`, `seed`, `csv`.
+  - `sesame_locomotion/reach_surface.py` (`ros2 run sesame_locomotion reach_surface`): griglia 61×61 di
+    (anca, ginocchio) nei limiti → `/compute_fk` dei 4 piedi in una chiamata → un CSV per gamba e
+    riepilogo. Parametri `step_deg`, `csv_prefix`.
+- `docs/ik/`: `ik_roundtrip.csv` e `reach_<gruppo>.csv` (dati delle verifiche).
+- `docker/Dockerfile`: aggiunti `ros-jazzy-moveit` e `ros-jazzy-pick-ik`.
+
+**Verifiche superate**
+
+- Andata e ritorno, 200 campioni per gamba, tolleranza 1 mm: 0 IK fallite, 800/800 sotto tolleranza.
+
+  | Gruppo | Campioni | IK fallite | < 1 mm | Errore max (mm) | Errore medio (mm) |
+  |---|---|---|---|---|---|
+  | `fr_leg` | 200 | 0 | 200 | 0.0005 | 0.0003 |
+  | `rr_leg` | 200 | 0 | 200 | 0.0005 | 0.0003 |
+  | `fl_leg` | 200 | 0 | 200 | 0.0006 | 0.0003 |
+  | `rl_leg` | 200 | 0 | 200 | 0.0005 | 0.0003 |
+
+- Marker in RViz su tutte e 4 le gambe (partenza da crouch, Approx IK Solutions attivo): il piede segue
+  il marker e Plan & Execute porta la gamba nella posizione mostrata.
+
+**Superficie raggiungibile** (frame `base`, mm; griglia 61×61 nei limiti)
+
+| Gruppo | Piede | x | y | z | Stand | Crouch |
+|---|---|---|---|---|---|---|
+| `fr_leg` | `r3_foot` | −24.3 … 101.5 | −98.0 … −12.2 | −40.0 … 40.2 | (55.0, −39.6, −39.9) | (69.3, −53.9, −35.4) |
+| `rr_leg` | `r4_foot` | −101.7 … 24.1 | −98.0 … −12.2 | −40.0 … 40.2 | (−55.2, −39.6, −39.9) | (−69.5, −53.9, −35.4) |
+| `fl_leg` | `l3_foot` | −24.3 … 101.5 | 21.7 … 107.6 | −40.0 … 40.2 | (55.0, 49.1, −39.9) | (69.3, 63.4, −35.4) |
+| `rl_leg` | `l4_foot` | −101.7 … 24.1 | 21.7 … 107.6 | −40.0 … 40.2 | (−55.2, 49.1, −39.9) | (−69.5, 63.4, −35.4) |
+
+- Gambe speculari: anteriori/posteriori in x (scarto 0.2 mm); destra/sinistra in y a meno di ~9.5 mm,
+  perché l'origine di `base` non è al centro (anche destre a y −20.6 mm, sinistre a +30.2 mm).
+- Forma: l'anca ha asse verticale, il ginocchio asse orizzontale. Il piede è a ~40 mm dall'asse del
+  ginocchio, che sta a z ≈ 0 e a ~36 mm in orizzontale dall'asse dell'anca. Con l'anca ferma il piede
+  percorre una semicirconferenza verticale di raggio 40 mm (z −40 con ginocchio a 180°/0°, cioè stand;
+  z +40 all'altro estremo); l'anca la fa ruotare attorno all'asse verticale.
+- Conseguenze per l'andatura: altezza e distanza dal corpo sono legate (non si alza il piede senza
+  spostarlo in fuori); la lunghezza del passo viene dall'anca (arco orizzontale), il sollevamento dal
+  ginocchio. In stand il piede è nel punto più basso e il ginocchio quasi non lo solleva (singolarità);
+  il crouch abbassa il corpo di soli 4.5 mm: per la fase 4 valutare una posa di partenza con ginocchio
+  a 45–60°.
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| `install/setup.bash: No such file` e `ros2: command not found` | comandi del container lanciati sull'host | `docker exec -it sesame_gpu bash`, poi `source install/setup.bash` |
+| Nuovo comando `reach_surface` non trovato | build fatta prima di copiare i file | copiare i file, poi `colcon build --packages-select sesame_locomotion` |
+| Il marker in RViz non trascina il piede | la rotazione del marker è un vincolo che la gamba a 2 giunti non rispetta | scheda Context → Approx IK Solutions |
+| CSV persi al riavvio | scritti in `/tmp` del container | copiati in `docs/ik/` |
+
+**Come avviare**
+
+```bash
+# container, T1
+cd /root/ros2_ws
+colcon build --symlink-install && source install/setup.bash
+ros2 launch sesame_bringup moveit.launch.py
+
+# container, T2
+source install/setup.bash
+ros2 run sesame_locomotion ik_roundtrip       # andata e ritorno, esito SUPERATO/NON SUPERATO
+ros2 run sesame_locomotion reach_surface      # superficie raggiungibile, CSV in /tmp/reach_<gruppo>.csv
+```
+
+---
+
 ## Convenzioni (contratto PC / ESP32)
 
 - Ordine dei giunti nel firmware: `R1, R2, L1, L2, R4, R3, L3, L4`.
@@ -155,11 +229,11 @@ ros2 launch sesame_bringup moveit.launch.py      # MoveIt + controllori + RViz
 - Limiti (gradi): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
 - Segnale servo: 50 Hz, impulso 732–2929 µs.
 
-## Prossimo passo: fase 3 — IK verificata
+## Prossimo passo: fase 4 — andatura in simulazione
 
-- Test di andata e ritorno: angoli casuali nei limiti → FK (`/compute_fk` o TF) → IK (`/compute_ik`)
-  → confronto della posizione del piede. Obiettivo: errore sotto 1 mm sui punti raggiungibili.
-- Prova interattiva: il piede segue il marker in RViz su tutte e 4 le gambe.
-- Documentare la superficie raggiungibile di ogni piede (la gamba ha 2 giunti: il piede raggiunge una
-  superficie, non un volume).
-- Nuovo pacchetto `sesame_locomotion` (Python) per lo script di test, riusato poi in fase 4.
+- Nodo in `sesame_locomotion` che genera le traiettorie dei piedi: arco in volo + spinta, trotto
+  (coppie diagonali `fr`+`rl` e `fl`+`rr`).
+- Piedi → IK → angoli; controllo che nessun limite venga superato e che le velocità restino entro
+  quelle dei servo (`joint_limits.yaml`: 3.0 rad/s).
+- Scegliere la posa di partenza (ginocchio 45–60°, vedi superficie raggiungibile della fase 3).
+- Salvare la tabella di un ciclo (angoli in ordine firmware) come riferimento per l'ESP32.

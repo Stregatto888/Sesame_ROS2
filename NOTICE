@@ -1,0 +1,5 @@
+Sesame ROS 2: descrizione del robot e mesh derivano da
+ - Sesame Robot di Dorian Todd (Apache-2.0)
+   https://github.com/dorianborian/sesame-robot
+ - sesame-ml di Luke Hollis (Apache-2.0), da cui proviene l'URDF
+   https://github.com/lukehollis/sesame-ml

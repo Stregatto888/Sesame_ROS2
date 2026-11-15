@@ -11,7 +11,7 @@ piano per ora.
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
 | 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
-| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | ⏭️ prossima | |
+| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–2 ✅) | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -359,6 +359,57 @@ ros2 run sesame_locomotion gait_player --ros-args -p table:=$D/trot_cycle.csv
 | RAM limitata (un core, ~320 KB) | firmware | misurare heap/stack con WiFi + web + display |
 | Agente micro-ROS sul PC | `docker/Dockerfile`, container | agente Jazzy e accesso a `/dev/ttyACM*` |
 | Hardware interface verso i topic | `sesame_hardware` | plugin C++ con `hardware:=real` |
+
+**Passi 1–2 — prova minima micro-ROS sulla S2 (15/11/2026)** ✅
+
+Esempio ufficiale `int32_publisher_custom_transport_usbcdc` (branch `jazzy` del componente) compilato,
+flashato sulla Lolin S2 Mini e letto da ROS 2 nel container `sesame_gpu`, fuori dalle due repo.
+
+- Cartella di prova sull'host: `~/workspace/hardware/microros_test` (clone del componente).
+- Container di build `sesame_idf` (immagine `espressif/idf:release-v5.5`, `--privileged -v /dev:/dev`,
+  cartella montata in `/work`); dipendenze Python `catkin_pkg colcon-common-extensions lark`.
+  Rientro: `docker start -ai sesame_idf`.
+- Chip letto da esptool: **ESP32-S2FNR2** rev. 1.0, 4 MB di flash e **2 MB di PSRAM** integrati, USB-OTG.
+- Agente sull'host: immagine `microros/micro-ros-agent:jazzy`, `--net=host`, `/dev/shm` condiviso.
+- L'esempio usa `ROS_DOMAIN_ID=100` (fisso nel codice) e espone due porte USB CDC:
+  `ttyACM0` = micro-ROS, `ttyACM1` = log. ID USB dell'applicazione: `303a:4002`.
+
+| Verifica | Esito |
+|---|---|
+| `idf.py set-target esp32s2 && idf.py build` | `Project build complete` |
+| Flash con `idf.py -p /dev/ttyACM0 flash` dal bootloader (0 + RST) | `Hash of data verified` su bootloader, app e partizioni |
+| Dopo il reset | `303a:4002` e due porte `ttyACM0`/`ttyACM1` |
+| Agente seriale su `ttyACM0` + RST della scheda | sessione stabilita, publisher creato; dopo altri due RST l'agente si riaggancia da solo |
+| Log su `ttyACM1` (`idf.py -p /dev/ttyACM1 monitor --no-reset`) | `Message published: N` ogni ~1 s |
+| `ros2 topic echo /esp32s2/int32_publisher_usbcdc` in `sesame_gpu` (`ROS_DOMAIN_ID=100`) | messaggi ricevuti, `data` crescente |
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| `docker: invalid reference format` | comando dell'agente abbreviato con `...` nelle istruzioni | comando completo `docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4` |
+| Senza agente all'avvio il task micro-ROS si chiude | l'esempio cerca l'agente solo per pochi secondi dopo il reset | avviare prima l'agente, poi RST della scheda |
+| Il contatore nell'echo torna a 0 | RST della scheda: nuova sessione | normale; l'agente resta acceso (`Serial port not found... waiting for connection`, poi `session established`) |
+| Comandi Git eseguiti nel container `sesame_idf` (`dubious ownership`, `cd` fallito) | terminale sbagliato | nessun effetto sulla repo; terminali con nomi fissi T1–T5 e Git sempre in T5 (host) |
+| Firmware Sesame sovrascritto dalla prova | stessa flash | si ricarica da Sesame_MuHack con `pio run -t upload` (0 + RST se serve) |
+
+**Come rifare la prova**
+
+```bash
+# T1, host: controllo USB
+watch -n 0.5 'lsusb | grep -i 303a; echo; ls -l /dev/ttyACM* 2>/dev/null'
+# T4, host → container sesame_idf: build e flash (scheda in download: tieni 0, premi RST, rilascia 0)
+docker start -ai sesame_idf
+cd /work/micro_ros_espidf_component/examples/int32_publisher_custom_transport_usbcdc
+idf.py build && idf.py -p /dev/ttyACM0 flash          # poi RST
+# T2, host: agente (resta acceso), poi RST della scheda
+docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4
+# T3, container sesame_gpu
+export ROS_DOMAIN_ID=100
+ros2 topic echo /esp32s2/int32_publisher_usbcdc
+# T4, container sesame_idf: log della scheda (uscita con Ctrl+])
+idf.py -p /dev/ttyACM1 monitor --no-reset
+```
 
 **Lavoro della fase**
 

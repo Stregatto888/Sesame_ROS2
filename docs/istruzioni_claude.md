@@ -25,6 +25,25 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   container `cd /root/ros2_ws && colcon build --symlink-install && source install/setup.bash`.
 - Uso di solito 3 terminali: T1 container (launch), T2 container (comandi), T3 host (git, editor).
   I comandi `ros2` vanno sempre nel container, mai sull'host.
+- **Terminali della fase 5** (sostituiscono T1–T3 sopra finché si lavora sul firmware). Prima di
+  incollare, controllare il prompt:
+
+  | Nome | Dove | Prompt | Uso |
+  |---|---|---|---|
+  | T1 | host | `[stregatto@archlinux ~]$` | controllo USB: `watch -n 0.5 'lsusb \| grep -i 303a; echo; ls -l /dev/ttyACM* 2>/dev/null'` |
+  | T2 | host | `[stregatto@archlinux ~]$` | agente micro-ROS (comando completo in `docs/progresso.md`, fase 5) |
+  | T3 | container `sesame_gpu` | `root@archlinux:~/ros2_ws#` | comandi `ros2` (e launch) |
+  | T4 | container `sesame_idf` | `root@<id>:/work/...#` | build, flash, log del firmware |
+  | T5 | host | `[stregatto@archlinux ...]$` | Git, `cp` dai Download, editor |
+
+  Git e `cp` sempre in T5. `sesame_gpu` usa la rete dell'host (prompt `root@archlinux`).
+- Container di build firmware `sesame_idf` (`espressif/idf:release-v5.5`, `--privileged -v /dev:/dev`,
+  `~/workspace/hardware/microros_test` montata in `/work`; rientro `docker start -ai sesame_idf`).
+  Agente micro-ROS sull'host con l'immagine `microros/micro-ros-agent:jazzy` (`--net=host`, `/dev/shm`
+  condiviso): resta acceso tra un reset e l'altro della scheda e si riaggancia da solo.
+- Flash della S2: modalità download con 0 tenuto + RST, poi `idf.py -p /dev/ttyACM0 flash`
+  (bootloader ROM via USB), poi RST. Nei comandi non scrivere mai abbreviazioni con `...`; indicare
+  sempre il terminale (T1–T5).
 - I file che mi dai li scarico in `~/Downloads`: dammi anche i comandi `cp`/`tar` per metterli al
   loro posto. Per riportarti un output uso `comando | tee <file>` o Ctrl+Shift+C.
 - Flusso Git per fase: `git switch -c feature/<fase>` → lavoro → `git add <percorsi precisi>` (mai
@@ -39,8 +58,9 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   raggiungibile) ✅ tag `v0.4-ik`.
 - Fase 4 (trotto in simulazione: IK su (x, z), tabella di un ciclo a 50 Hz, controlli su limiti,
   velocità e passo per tick, riproduzione in RViz) ✅ tag `v0.5-gait`.
-- **Prossima: fase 5, ESP32 e ponte ROS con micro-ROS** (piano A, scelto il 15/11/2026: componente
-  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC).
+- **In corso: fase 5, ESP32 e ponte ROS con micro-ROS** (piano A, scelto il 15/11/2026: componente
+  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC). Passi 1–2 ✅: esempio USB CDC
+  compilato, flashato e letto da ROS 2 tramite l'agente. Prossimo: passo 3 (interfaccia e build).
 
 ## Struttura
 - `sesame_description`: `urdf/sesame.urdf` (originale, non si modifica), `sesame.urdf.xacro` (radice
@@ -82,15 +102,15 @@ Pose SRDF: `stand` e `crouch` (ginocchia rientrate di 30°).
 
 ## Roadmap rimanente (ogni fase finisce con un controllo verificabile)
 5. **ESP32 e ponte ROS con micro-ROS (piano A)**:
-   - Scheda: **Lolin S2 Mini** (ESP32-S2, confermata). Scelta: **micro-ROS** con il componente
+   - Scheda: **Lolin S2 Mini** (ESP32-S2FNR2: 4 MB flash, 2 MB PSRAM, confermata). Scelta: **micro-ROS** con il componente
      ufficiale `micro_ros_espidf_component` (branch `jazzy`), testato su ESP-IDF 5.2–5.5 con ESP32-S2.
      Trasporto: **USB CDC nativa** (esempio `int32_publisher_custom_transport_usbcdc`); in seguito UDP
      su WiFi. La libreria `micro_ros_platformio` (Arduino) supporta ufficialmente solo `esp32dev`: non
      la usiamo. Scartati: protocollo nostro, cambio scheda.
    - Conseguenze sul firmware:
      - Build da Arduino puro a **ESP-IDF con Arduino come componente** (si riusano ESP32Servo, Adafruit,
-       web server). Strumento di build (idf.py in Docker `espressif/idf` oppure PlatformIO con
-       `framework = arduino, espidf`) e versioni da fissare dopo la prova minima (passo 1).
+       web server). ESP-IDF 5.5 (provato nei passi 1–2); `espressif/arduino-esp32` 3.3.x è basato su
+       ESP-IDF 5.5. Strumento di build da fissare al passo 3 (proposta: idf.py in `sesame_idf`).
      - La USB nativa diventa **solo micro-ROS**: niente `Serial` per log e CLI. Log su una UART a pin
        liberi (adattatore USB-seriale) oppure spenti; la CLI seriale si disattiva in modalità ROS.
      - Con il firmware TinyUSB il flash richiede la modalità download (tasto 0 + RST) se l'auto-reset

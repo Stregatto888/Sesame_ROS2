@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ik_roundtrip = sesame_locomotion.ik_roundtrip:main',
+            'reach_surface = sesame_locomotion.reach_surface:main',
         ],
     },
 )

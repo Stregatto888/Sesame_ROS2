@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<!--
+  Blocco ros2_control di Sesame.
+  Ogni giunto ha un comando di posizione e stati di posizione e velocita'.
+  initial_value = posa "stand" (gradi del servo = angolo URDF):
+    R1 135, R2 45, L1 45, L2 135, R4 0, R3 180, L3 0, L4 180
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="sesame_joint" params="name initial">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">${initial}</param>
+      </state_interface>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="sesame_ros2_control" params="hardware">
+    <ros2_control name="SesameSystem" type="system">
+
+      <hardware>
+        <xacro:if value="${hardware == 'mock'}">
+          <plugin>mock_components/GenericSystem</plugin>
+          <param name="calculate_dynamics">false</param>
+        </xacro:if>
+        <xacro:if value="${hardware == 'real'}">
+          <!-- Fase 5: plugin sesame_hardware/SesameSystemHardware -->
+          <plugin>sesame_hardware/SesameSystemHardware</plugin>
+        </xacro:if>
+      </hardware>
+
+      <!-- Gamba anteriore destra -->
+      <xacro:sesame_joint name="R1" initial="${135*pi/180}"/>
+      <xacro:sesame_joint name="R3" initial="${180*pi/180}"/>
+      <!-- Gamba posteriore destra -->
+      <xacro:sesame_joint name="R2" initial="${45*pi/180}"/>
+      <xacro:sesame_joint name="R4" initial="${0*pi/180}"/>
+      <!-- Gamba anteriore sinistra -->
+      <xacro:sesame_joint name="L1" initial="${45*pi/180}"/>
+      <xacro:sesame_joint name="L3" initial="${0*pi/180}"/>
+      <!-- Gamba posteriore sinistra -->
+      <xacro:sesame_joint name="L2" initial="${135*pi/180}"/>
+      <xacro:sesame_joint name="L4" initial="${180*pi/180}"/>
+
+    </ros2_control>
+  </xacro:macro>
+
+</robot>

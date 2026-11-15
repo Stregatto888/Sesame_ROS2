@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-joint-state-publisher-gui \
       ros-jazzy-rviz2 \
       ros-jazzy-tf2-tools \
+      ros-jazzy-ros2-control \
+      ros-jazzy-ros2-controllers \
+      ros-jazzy-xacro \
       python3-colcon-common-extensions \
       liburdfdom-tools \
       libgl1-mesa-dri \

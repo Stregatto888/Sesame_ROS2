@@ -1,0 +1,19 @@
+Trotto: anca 15.0° dal laterale, ginocchio 45.0°, passo 30.0 mm, volo 12.0 mm, ciclo 1.0 s, 50 campioni a 50 Hz -> velocità 60 mm/s
+Posa di partenza (°): R1 105, R2 75, L1 75, L2 105, R4 45, R3 135, L3 45, L4 135
+Piedi a riposo (mm):  fr_leg (48.8, -80.3, -29.3), rr_leg (-49.0, -80.3, -29.3), fl_leg (48.8, 89.8, -29.3), rl_leg (-49.0, 89.8, -29.3)
+giunto   min °   max °    limiti  passo max °  vel max °/s
+R1        91.1   120.5   45-180          2.03        101.3
+R2        59.5    88.9    0-135          2.03        101.3
+L1        59.5    88.9    0-135          2.03        101.3
+L2        91.1   120.5   45-180          2.03        101.3
+R4        45.0    66.4    0-180          2.67        133.6
+R3       113.6   135.0    0-180          2.67        133.6
+L3        45.0    66.4    0-180          2.67        133.6
+L4       113.6   135.0    0-180          2.67        133.6
+slittamento laterale in appoggio fr_leg: 12.7 mm
+slittamento laterale in appoggio rr_leg: 12.0 mm
+slittamento laterale in appoggio fl_leg: 12.7 mm
+slittamento laterale in appoggio rl_leg: 12.0 mm
+Soglie: limiti URDF, velocità <= 172 °/s, passo per tick <= 12°
+ESITO: SUPERATO
+Tabella (ordine firmware, gradi): /root/ros2_ws/src/sesameMuhackROS/docs/gait/trot_cycle.csv

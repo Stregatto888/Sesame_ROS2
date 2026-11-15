@@ -20,6 +20,9 @@ setup(
         'console_scripts': [
             'ik_roundtrip = sesame_locomotion.ik_roundtrip:main',
             'reach_surface = sesame_locomotion.reach_surface:main',
+            'fk_check = sesame_locomotion.fk_check:main',
+            'gait_planner = sesame_locomotion.gait:main',
+            'gait_player = sesame_locomotion.gait_player:main',
         ],
     },
 )

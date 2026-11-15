@@ -10,8 +10,8 @@ piano per ora.
 | 1 | xacro + ros2_control con hardware finto | ✅ fatta | `v0.2-control` |
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
-| 4 | Andatura in simulazione | ⏭️ prossima | |
-| 5 | ESP32 e ponte ROS (`sesame_hardware`) | da fare | |
+| 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
+| 5 | ESP32 e ponte ROS (`sesame_hardware`) | ⏭️ prossima | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -220,6 +220,115 @@ ros2 run sesame_locomotion reach_surface      # superficie raggiungibile, CSV in
 
 ---
 
+## Fase 4 — Andatura in simulazione (15/11/2026)
+
+**Scelte di progetto**
+
+- IK nelle coordinate che la gamba controlla davvero: con 2 giunti si fissano solo 2 coordinate del
+  piede, x (avanti) e z (altezza) nel frame `base`; la y ne è una conseguenza (l'anca ruota attorno a
+  un asse verticale). Newton con jacobiano numerico sulla FK letta dall'URDF: niente servizi ROS nel
+  ciclo, stesso calcolo riusabile in seguito.
+- Trotto: coppie diagonali `fr`+`rl` (fase 0) e `fl`+`rr` (fase 0.5), duty factor 0.5. Appoggio: il
+  piede va da x0 + S/2 a x0 − S/2 a quota costante. Volo: ritorno con arco cicloidale alto h.
+- Il ciclo è calcolato una volta (tabella a 50 Hz) e poi riprodotto: è lo stesso formato che userà
+  l'ESP32 in fase 5.
+- Anca espressa come angolo della gamba dal laterale (90°): 45° = stand, 0° = gamba tutta di lato.
+  Ginocchio espresso come piega rispetto alla gamba distesa.
+
+**Parametri scelti** (predefiniti di `gait_planner`)
+
+| Parametro | Valore |
+|---|---|
+| Anca dal laterale | 15° |
+| Piega del ginocchio a riposo | 45° |
+| Passo | 30 mm |
+| Altezza del volo | 12 mm |
+| Ciclo | 1.0 s (50 campioni a 50 Hz) → 60 mm/s |
+| Posa di partenza (°) | R1 105, R2 75, L1 75, L2 105, R4 45, R3 135, L3 45, L4 135 |
+| Piedi a riposo (mm) | fr (48.8, −80.3, −29.3), rr (−49.0, −80.3, −29.3), fl (48.8, 89.8, −29.3), rl (−49.0, 89.8, −29.3) |
+
+**Scelta dell'anca** (passo 30 mm, ginocchio 45°): è un compromesso tra piedi lontani dal centro in x
+(base d'appoggio più lunga) e scorrimento laterale del piede in appoggio, inevitabile con 2 giunti.
+
+| Anca dal laterale | Piedi anteriori a x | Scorrimento laterale in appoggio | Esito |
+|---|---|---|---|
+| 0° | 33 mm | 4 mm | superato |
+| 10° | 44 mm | 9 mm | superato |
+| **15° (scelta)** | **49 mm** | **12 mm** | superato |
+| 20° | 54 mm | 16 mm | superato |
+| 25° | 59 mm | 20 mm | superato |
+| 30° | 63 mm | 24 mm | superato |
+| 45° (come stand) | — | — | IK fallita: le anche anteriori arrivano al limite (180°) |
+
+**File nuovi**
+
+- `sesame_locomotion/sesame_locomotion/kinematics.py`: FK generica letta da `sesame.urdf` (solo
+  numpy) e IK (x, z) → (anca, ginocchio). Costanti condivise: gruppi, ordine firmware, limiti, stand.
+- `sesame_locomotion/sesame_locomotion/fk_check.py` (`ros2 run sesame_locomotion fk_check`): confronta
+  la FK locale con `/compute_fk` (richiede MoveIt).
+- `sesame_locomotion/sesame_locomotion/gait.py` (`ros2 run sesame_locomotion gait_planner`): genera il
+  ciclo, lo verifica e scrive la tabella. Opzioni `--hip`, `--knee`, `--stride`, `--lift`, `--period`,
+  `--rate`, `--out`. Esce con codice 1 se un controllo non passa.
+- `sesame_locomotion/sesame_locomotion/gait_player.py` (`ros2 run sesame_locomotion gait_player`):
+  porta il robot alla prima riga in `approach_s` (2 s) e ripete il ciclo `cycles` volte (10) sui 4
+  `joint_trajectory_controller`. Parametro `table`. Basta `control.launch.py`.
+- `sesame_locomotion/setup.py`, `package.xml`: nuovi comandi; dipendenze `trajectory_msgs`,
+  `ament_index_python`, `python3-numpy`.
+- `docs/gait/trot_cycle.csv`: tabella di un ciclo, colonne `t_s` + giunti in ordine firmware
+  (R1, R2, L1, L2, R4, R3, L3, L4), in gradi (= gradi del servo con direzione +1 e subtrim 0).
+- `docs/gait/gait_planner.txt`: output completo del planner con i parametri scelti.
+
+**Verifiche superate**
+
+- `fk_check`: 200 campioni per gamba, errore massimo 0.0000 mm su tutte e 4: la FK locale coincide con
+  MoveIt (e quindi con la catena verificata in fase 3). Anche stand e crouch coincidono al decimo di mm.
+- `gait_planner` con i parametri scelti: ESITO SUPERATO.
+
+  | Giunto | Min ° | Max ° | Limiti ° | Passo max per tick ° | Velocità max °/s |
+  |---|---|---|---|---|---|
+  | R1 | 91.1 | 120.5 | 45–180 | 2.03 | 101.3 |
+  | R2 | 59.5 | 88.9 | 0–135 | 2.03 | 101.3 |
+  | L1 | 59.5 | 88.9 | 0–135 | 2.03 | 101.3 |
+  | L2 | 91.1 | 120.5 | 45–180 | 2.03 | 101.3 |
+  | R4 | 45.0 | 66.4 | 0–180 | 2.67 | 133.6 |
+  | R3 | 113.6 | 135.0 | 0–180 | 2.67 | 133.6 |
+  | L3 | 45.0 | 66.4 | 0–180 | 2.67 | 133.6 |
+  | L4 | 113.6 | 135.0 | 0–180 | 2.67 | 133.6 |
+
+  Soglie: limiti URDF, velocità ≤ 172 °/s (3.0 rad/s di `joint_limits.yaml`), passo per tick ≤ 12°
+  (sicurezza del firmware). Scorrimento laterale in appoggio: 12.7 mm (anteriori), 12.0 mm (posteriori).
+- Controllo negativo: con `--knee 60 --stride 40 --lift 15 --period 0.6` (133 mm/s) le velocità
+  arrivano a 238 °/s e l'esito è NON SUPERATO, come atteso.
+- RViz con `gait_player`: il trotto si vede correttamente sulle 4 gambe (corpo fisso, zampe "in aria":
+  la fisica è fuori dal piano).
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| `IK fallita: fr_leg ... x=90.4` con le anche come in stand | con la gamba a 45° le anche anteriori sono vicine al limite di 180°: il piede non può andare 15 mm più avanti | parametro `--hip`: gamba più verso il laterale |
+| Piede che scorre di lato 24 mm in appoggio con anca a 30° | con 2 giunti il piede in appoggio segue un arco attorno all'asse dell'anca | anca a 15°: compromesso tra lunghezza della base e scorrimento (12 mm) |
+| Output da riportare in chat | — | `comando \| tee <file>` per salvarlo nella repo, oppure Ctrl+Shift+C nel terminale |
+
+**Come avviare**
+
+```bash
+# container, T1: controllori + RViz (MoveIt non serve per riprodurre l'andatura)
+cd /root/ros2_ws
+colcon build --symlink-install && source install/setup.bash
+ros2 launch sesame_bringup control.launch.py
+
+# container, T2
+source install/setup.bash
+D=/root/ros2_ws/src/sesameMuhackROS/docs/gait
+ros2 run sesame_locomotion gait_planner --out $D/trot_cycle.csv | tee $D/gait_planner.txt
+ros2 run sesame_locomotion gait_player --ros-args -p table:=$D/trot_cycle.csv
+# altre prove: gait_planner --hip 20 --stride 40 --lift 15 --period 0.8
+# controllo FK (con moveit.launch.py al posto di control.launch.py): ros2 run sesame_locomotion fk_check
+```
+
+---
+
 ## Convenzioni (contratto PC / ESP32)
 
 - Ordine dei giunti nel firmware: `R1, R2, L1, L2, R4, R3, L3, L4`.
@@ -229,11 +338,12 @@ ros2 run sesame_locomotion reach_surface      # superficie raggiungibile, CSV in
 - Limiti (gradi): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
 - Segnale servo: 50 Hz, impulso 732–2929 µs.
 
-## Prossimo passo: fase 4 — andatura in simulazione
+## Prossimo passo: fase 5 — ESP32 e ponte ROS
 
-- Nodo in `sesame_locomotion` che genera le traiettorie dei piedi: arco in volo + spinta, trotto
-  (coppie diagonali `fr`+`rl` e `fl`+`rr`).
-- Piedi → IK → angoli; controllo che nessun limite venga superato e che le velocità restino entro
-  quelle dei servo (`joint_limits.yaml`: 3.0 rad/s).
-- Scegliere la posa di partenza (ginocchio 45–60°, vedi superficie raggiungibile della fase 3).
-- Salvare la tabella di un ciclo (angoli in ordine firmware) come riferimento per l'ESP32.
+- Scegliere scheda e trasporto: micro-ROS supporta solo esp32dev (la Lolin S2 Mini no); alternative:
+  componente ESP-IDF oppure ponte seriale/UDP con un protocollo nostro.
+- Firmware (`Sesame_MuHack`, branch `feature/ros-bridge` da `develop`): driver servo non bloccante a
+  50 Hz, limiti per giunto, passo massimo 12° per tick, watchdog 250 ms (senza comandi → si ferma).
+- Plugin ros2_control `sesame_hardware` (attivato da `hardware:=real`), ordine giunti firmware e
+  conversione `servo = 90 + direzione·(angolo − 90) + subtrim`.
+- Calibrare i subtrim; primo test sempre con il robot sollevato, poi la tabella `docs/gait/trot_cycle.csv`.

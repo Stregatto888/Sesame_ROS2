@@ -1,0 +1,11 @@
+# Default initial positions for sesame_quadruped's ros2_control fake system
+
+initial_positions:
+  L1: 0
+  L2: 0
+  L3: 0
+  L4: 0
+  R1: 0
+  R2: 0
+  R3: 0
+  R4: 0

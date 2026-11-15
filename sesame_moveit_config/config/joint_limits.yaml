@@ -1,0 +1,20 @@
+# sesame_moveit_config/config/joint_limits.yaml
+# Limiti di posizione: vengono dall'URDF. Qui solo velocità e accelerazione per la pianificazione.
+# Su Jazzy servono i limiti di accelerazione, altrimenti l'esecuzione fallisce ("No acceleration limit").
+# Valori prudenti per micro servo: da rivedere in fase 4 con le velocità reali.
+default_velocity_scaling_factor: 0.5
+default_acceleration_scaling_factor: 0.5
+
+joint_limits:
+  R1: &servo
+    has_velocity_limits: true
+    max_velocity: 3.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  R2: *servo
+  R3: *servo
+  R4: *servo
+  L1: *servo
+  L2: *servo
+  L3: *servo
+  L4: *servo

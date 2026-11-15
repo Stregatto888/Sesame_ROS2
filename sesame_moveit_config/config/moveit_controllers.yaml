@@ -1,0 +1,34 @@
+# sesame_moveit_config/config/moveit_controllers.yaml
+# MoveIt invia le traiettorie ai 4 controllori della fase 1 (sesame_bringup/config/controllers.yaml).
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - fr_leg_controller
+    - rr_leg_controller
+    - fl_leg_controller
+    - rl_leg_controller
+
+  fr_leg_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [R1, R3]
+
+  rr_leg_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [R2, R4]
+
+  fl_leg_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [L1, L3]
+
+  rl_leg_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints: [L2, L4]

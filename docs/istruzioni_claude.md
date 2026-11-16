@@ -35,6 +35,7 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   | T3 | container `sesame_gpu` | `root@archlinux:~/ros2_ws#` | comandi `ros2` (e launch) |
   | T4 | container `sesame_idf` | `root@<id>:/work/...#` | build, flash, log del firmware |
   | T5 | host | `[stregatto@archlinux ...]$` | Git, `cp` dai Download, editor |
+  | T6 | container `sesame_gpu` | `root@archlinux:~/ros2_ws#` | secondo terminale `ros2` mentre T3 tiene il launch (`docker exec -it sesame_gpu bash`) |
 
   Git e `cp` sempre in T5. `sesame_gpu` usa la rete dell'host (prompt `root@archlinux`).
 - Container di build firmware `sesame_idf` (immagine `sesame_idf:passo2`, da `espressif/idf:release-v5.5`,
@@ -51,7 +52,7 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   `git add .` alla cieca) → commit convenzionale (`feat(...)`) → push → a fase verificata merge
   `--no-ff` in `main` + tag annotato.
 
-## Stato attuale (15/11/2026)
+## Stato attuale (16/11/2026)
 - Fase 0 (Git, licenza Apache-2.0, NOTICE) ✅ tag `v0.1-rviz`.
 - Fase 1 (xacro + ros2_control con hardware finto, 4 joint_trajectory_controller a 50 Hz) ✅ tag `v0.2-control`.
 - Fase 2 (MoveIt 2 + pick_ik, 4 gruppi gamba) ✅ tag `v0.3-moveit`.
@@ -64,13 +65,17 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   ESP-IDF 5.5 + Arduino 3.3.12 come componente, micro-ROS dentro il firmware (`ttyACM0` micro-ROS,
   `ttyACM1` log), decisioni su interfaccia, sicurezze, modalità e memoria, firmware in modalità ROS
   verificato con `ros2 topic pub` (Sesame_MuHack `feature/ros-bridge`, commit `6325c58`).
-  Prossimo: passo 5 (plugin `sesame_hardware`), poi 6 (calibrazione dei subtrim e verifica finale).
+  Passo 5 ✅: plugin `sesame_hardware` verificato sul robot sollevato (attivazione dalla posa letta,
+  trotto con `gait_player`, MoveIt con `hardware:=real`, watchdog). Punto aperto: il crouch di
+  `fr_leg` e `rl_leg` (R3/L4 da 180° a 150°) non si vede sul robot anche se comandi ed eco valgono 150
+  (ipotesi: fine corsa del servo vicino a 180°). Prossimo: passo 6, prima il punto aperto, poi
+  calibrazione dei subtrim e verifica finale.
 
 ## Struttura
 - `sesame_description`: `urdf/sesame.urdf` (originale, non si modifica), `sesame.urdf.xacro` (radice
   `base_footprint`, arg `hardware:=mock|real`), `sesame.ros2_control.xacro`, `calibration/default.yaml`.
 - `sesame_bringup`: `config/controllers.yaml`, `launch/control.launch.py` (arg `hardware`, `rviz`),
-  `launch/moveit.launch.py` (include control con `rviz:=false`, avvia move_group + RViz MotionPlanning).
+  `launch/moveit.launch.py` (arg `hardware`; include control con `rviz:=false`, avvia move_group + RViz MotionPlanning).
 - `sesame_moveit_config`: robot `sesame_quadruped`, SRDF `config/sesame_quadruped.srdf`;
   `kinematics.yaml` pick_ik (`mode: global`, `rotation_scale: 0.0`, `position_threshold: 0.001`);
   `joint_limits.yaml` (vel 3.0 rad/s, acc 5.0 rad/s²); `moveit_controllers.yaml` (4 FollowJointTrajectory).
@@ -82,8 +87,8 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 - `docs/ik/` (CSV delle verifiche della fase 3), `docs/gait/trot_cycle.csv` (un ciclo di trotto,
   colonne `t_s` + giunti in ordine firmware, gradi) e `docs/gait/gait_planner.txt`.
 - `tools/joint_degrees.py`: `/joint_states` → gradi in ordine firmware e valore servo.
-- Da creare: `sesame_hardware` (fase 5, passo 5): plugin ros2_control in C++
-  `sesame_hardware/SesameSystemHardware` (già indicato nello xacro con `hardware:=real`). Pubblica
+- `sesame_hardware` (fase 5, passo 5): plugin ros2_control in C++
+  `sesame_hardware/SesameSystemHardware` (xacro con `hardware:=real`, parametri da `default.yaml`). Pubblica
   `/sesame/joint_commands` e legge `/sesame/joint_echo` (best-effort, `std_msgs/Float32MultiArray`,
   8 valori in ordine firmware, gradi del servo); converte URDF (rad) ↔ servo (gradi) con direzione e
   subtrim di `calibration/default.yaml`; all'attivazione parte dalla posa letta dall'eco. L'agente
@@ -105,7 +110,8 @@ Pose SRDF: `stand` e `crouch` (ginocchia rientrate di 30°).
 - Stand (°): R1 135, R2 45, L1 45, L2 135, R4 0, R3 180, L3 0, L4 180. Crouch: R3 150, R4 30, L3 30, L4 150.
 - Posa di partenza del trotto (°): R1 105, R2 75, L1 75, L2 105, R4 45, R3 135, L3 45, L4 135.
 - Limiti (°): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
-- Servo: 50 Hz, impulso 732–2929 µs. Sicurezza nel firmware: limiti per giunto, passo massimo 12° ogni
+- Servo: 50 Hz, impulso 732–2929 µs. Sicurezza nel firmware: limiti per giunto (URDF ± 8° per il
+  subtrim, dentro 0–180; il plugin limita ai limiti URDF esatti), passo massimo 12° ogni
   20 ms, watchdog 250 ms (fermo nella posa corrente); primo test sempre con il robot sollevato.
 - micro-ROS: nodo `sesame_esp32`, `ROS_DOMAIN_ID` 0, best-effort; `/sesame/joint_commands` e
   `/sesame/joint_echo` (`std_msgs/Float32MultiArray`, 8 valori in ordine firmware, gradi del servo).

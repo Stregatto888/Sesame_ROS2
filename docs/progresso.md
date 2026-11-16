@@ -11,7 +11,7 @@ piano per ora.
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
 | 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
-| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–4 ✅) | |
+| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–5 ✅, un punto aperto) | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -336,7 +336,9 @@ ros2 run sesame_locomotion gait_player --ros-args -p table:=$D/trot_cycle.csv
 - Posa stand (gradi): R1 135, R2 45, L1 45, L2 135, R4 0, R3 180, L3 0, L4 180.
 - Posa crouch (gradi): anche come stand, R3 150, R4 30, L3 30, L4 150.
 - Limiti (gradi): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
-- Segnale servo: 50 Hz, impulso 732–2929 µs.
+  Il plugin limita in gradi URDF; il firmware limita in gradi del servo ai limiti URDF ± 8°
+  (`ROS_LIMIT_MARGIN_DEG` = `maximum_subtrim_degrees`), dentro il campo 0–180.
+- Segnale servo: 50 Hz, impulso 732–2929 µs (0–180° del servo).
 - Interfaccia micro-ROS (fase 5): nodo `sesame_esp32`, `ROS_DOMAIN_ID` 0, QoS best-effort;
   `/sesame/joint_commands` (PC → ESP32) e `/sesame/joint_echo` (ESP32 → PC, 50 Hz), entrambi
   `std_msgs/Float32MultiArray` con 8 valori in ordine firmware, in gradi del servo (decimali).
@@ -560,9 +562,132 @@ ros2 topic pub --rate 50 /sesame/joint_commands std_msgs/msg/Float32MultiArray "
 # terminale web: status, mode, mode web
 ```
 
+**Passo 5 — plugin ros2_control `sesame_hardware` (16/11/2026)** ✅ (punto aperto: crouch fisico di R3/L4)
+
+Correzioni emerse dal controllo repo ↔ diario all'inizio del passo:
+
+| Punto | Problema | Correzione |
+|---|---|---|
+| 1 | `calibration/` non installata: `default.yaml` non si trova da ROS | `sesame_description/CMakeLists.txt` installa anche `calibration` |
+| 2 | `moveit.launch.py` fissava `hardware: mock` | argomento `hardware` (predefinito `mock`) passato a `control.launch.py`; move_group e RViz restano sull'URDF `mock` (il blocco `ros2_control` non conta per MoveIt) |
+| 3 | Il firmware limitava i gradi del servo ai limiti URDF: con un subtrim il comando veniva tagliato (ginocchia in stand a 0°/180°) | firmware: limiti URDF ± `ROS_LIMIT_MARGIN_DEG` 8°, dentro 0–180; plugin: limiti URDF esatti prima della conversione, `|subtrim|` ≤ 8° (`maximum_subtrim_degrees` in `default.yaml`) |
+
+**Decisioni del passo 5** (la soluzione più semplice e sicura)
+
+1. Calibrazione: lo xacro legge `default.yaml` con `xacro.load_yaml` e passa al plugin i parametri
+   (`<hardware>`: topic, tempi, campo del servo, subtrim massimo; per giunto: `firmware_index`,
+   `direction`, `subtrim_degrees`, `min_degrees`, `max_degrees`). Niente yaml-cpp nel plugin;
+   `default.yaml` resta l'unica fonte. Con `hardware:=mock` l'URDF generato non cambia.
+2. Margine del firmware 8°: una squadretta a 25 denti si sposta di 14,4° per dente, quindi rimontandola
+   ogni scarto rientra in ±7,2°. Il plugin rifiuta un `|subtrim|` > 8° (errore in `on_init`).
+   Limite fisico: un ginocchio in stand (0°/180°) con subtrim verso l'esterno non è raggiungibile
+   (servo a fine corsa); il plugin lo segnala all'avvio.
+3. API del plugin: quella classica di Jazzy (`on_init(HardwareInfo)`, `export_*_interfaces` con
+   puntatori), presente in tutte le 4.x; gli avvisi di deprecazione delle ultime versioni sono
+   silenziati nel solo plugin.
+4. Nodo interno `sesame_hardware` (senza argomenti globali) con executor in un thread proprio; eco
+   protetta da un mutex, comandi pubblicati direttamente in `write()` (50 Hz, niente `realtime_tools`).
+5. QoS: best-effort, keep last 1, volatile (come il firmware); `ROS_DOMAIN_ID` 0.
+   Terminale T6 (secondo terminale in `sesame_gpu`) per i comandi `ros2` mentre T3 tiene il launch.
+6. Attivazione: aspetta un'eco nuova per al massimo 2 s; senza eco l'attivazione fallisce e non parte
+   nessun comando. Con l'eco, stati e comandi = posa letta (90° dopo il boot): nessun movimento.
+   Il primo comando porta il firmware in modalità ROS.
+7. Senza eco per più di 250 ms: avviso, stati fermi all'ultima eco, velocità a 0; `read()` non dà
+   errore (il firmware è già fermo per il watchdog). Velocità = differenza tra due eco successive.
+8. Comandi: NaN → messaggio non inviato (watchdog del firmware); fuori dai limiti URDF o dal campo del
+   servo → limitati con avviso. Disattivazione → niente più comandi, fermo nella posa (watchdog).
+
+**File nuovi o modificati**
+
+- `sesame_hardware/` (nuovo, `ament_cmake`, Apache-2.0): `CMakeLists.txt`, `package.xml`,
+  `sesame_hardware.xml` (pluginlib), `include/sesame_hardware/conversion.hpp` (conversione senza ROS),
+  `include/sesame_hardware/sesame_system_hardware.hpp`, `src/sesame_system_hardware.cpp`.
+- `sesame_description/urdf/sesame.ros2_control.xacro`: parametri del plugin da `default.yaml`.
+- `sesame_description/calibration/default.yaml`: `safety.maximum_subtrim_degrees: 8`.
+- `sesame_description/CMakeLists.txt`: installa `calibration`.
+- `sesame_bringup/launch/moveit.launch.py`: argomento `hardware`; `control.launch.py`: commento d'uso;
+  `sesame_bringup/package.xml`: dipendenza `sesame_hardware`.
+- Firmware `Sesame_MuHack` (`feature/ros-bridge`): `include/core/config.h` (`ROS_LIMIT_MARGIN_DEG`,
+  `SERVO_RANGE_MIN_DEG`, `SERVO_RANGE_MAX_DEG`), `src/ros/ros_bridge.cpp` (limiti con margine).
+
+**Verifiche fatte prima della consegna** (nella sessione, senza ROS)
+
+- xacro: `hardware:=mock` produce lo stesso URDF di prima; `hardware:=real` ha i parametri attesi
+  (indici firmware R1 0, R2 1, L1 2, L2 3, R4 4, R3 5, L3 6, L4 7).
+- Conversione: andata e ritorno esatti per direzione ±1 e subtrim −8…+8 su 0–180°.
+- Plugin: compilazione di sola sintassi con `-Wall -Wextra -Wpedantic -Werror`.
+
+**Verifiche superate** (robot sollevato)
+
+| Verifica | Esito |
+|---|---|
+| `colcon build` di `sesame_description`, `sesame_hardware`, `sesame_bringup` | 3 pacchetti in 10,5 s; `calibration/default.yaml` installato |
+| Senza agente: `control.launch.py hardware:=real` | dopo 2 s `nessuna eco ... attivazione rifiutata, nessun comando inviato`; il controller_manager di Jazzy poi si chiude da solo (`Failed to set the initial state of the component`): atteso, nessun comando inviato |
+| Senza scheda: eco finta (stand) da T6 | plugin attivo, `/sesame/joint_commands` = stand, controllori `active`; eco fermata → avviso `nessuna eco` |
+| `idf.py build` e flash del firmware con il margine dei limiti | come al passo 4 |
+| Agente acceso: attivazione | posa letta dall'eco (anche quella lasciata dalla prova precedente, es. R1 120.4 R3 135.0 …), nessun movimento all'avvio |
+| `gait_player` sul robot | trotto corretto sulle 4 gambe |
+| MoveIt `hardware:=real` | piani ed esecuzioni `SUCCEEDED` su tutti i gruppi; stand corretto sulle 4 gambe; crouch corretto su `rr_leg` e `fl_leg` (per `fr_leg` e `rl_leg` vedi punto aperto) |
+| Ctrl+C sul launch / agente fermato | `watchdog` dopo 250 ms; avviso `nessuna eco` nel plugin; ricollegamento automatico |
+| Memoria del firmware in modalità ROS | heap interno 72,6 KB (minimo 39,6 KB), stack libero di `TaskRos` 7,8 KB; `scartati 0`, `limitati 0` |
+| R1 comandato a 10° (limite firmware 37°) | non ancora provato |
+
+**Punto aperto: crouch di `fr_leg` e `rl_leg` non visibile sul robot**
+
+- Sintomo: da MoveIt (`crouch`) e con traiettorie mandate direttamente a `fr_leg_controller` e
+  `rl_leg_controller` i ginocchi R3 e L4 non si vedono piegare da 180° a 150°; `rr_leg` e `fl_leg`
+  (R4 e L3 da 0° a 30°) sì.
+- La catena software è corretta fino al pin: esecuzione `SUCCEEDED`, `/joint_states` R3 e L4 = 2.618 rad,
+  `/sesame/joint_commands` e `/sesame/joint_echo` con il 6° (R3) e l'8° (L4) valore = 150.0 (l'eco è
+  l'angolo scritto dal firmware), log del firmware con `limitati 0` e `scartati 0`.
+- Nel trotto R3 e L4 lavorano tra 113,6° e 135° e si muovono bene; al passo 4 lo stand/crouch con
+  `ros2 topic pub` (tutte le gambe insieme) era fluido.
+- Ipotesi principale: R3 e L4 in stand sono comandati a 180° (impulso 2929 µs, fine del campo); se il
+  servo raggiunge la sua fine corsa prima (es. ~150°), stand e crouch coincidono e la gamba sembra
+  ferma. R4 e L3 stanno all'altro estremo (0°, 732 µs) e lo raggiungono. Alternative: problema
+  meccanico o del servo vicino a quell'estremo.
+- Da fare all'inizio del passo 6: confronto a occhio delle 4 gambe in stand (ginocchi distesi allo
+  stesso modo? ronzio dei servo di R3/L4?) e prova di R3/L4 a 150°, 120° e 90° con traiettorie
+  dirette; poi misura dell'angolo reale in stand e correzione con subtrim (±8°) o rimontaggio della
+  squadretta di un dente.
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| Avvisi di deprecazione con `emplace_back` delle interfacce (trovato prima della consegna) | il costruttore deprecato viene istanziato nella libreria standard, fuori dal `#pragma` | interfacce costruite esplicitamente e aggiunte con `push_back` |
+| `ros2_control_node` termina se l'attivazione fallisce | comportamento del controller_manager di Jazzy all'avvio | atteso: accendere agente e scheda, poi rilanciare il launch |
+| `cp` e `rm` del log falliti (`No such file`) | comandi dell'host lanciati nel container (`~` = `/root`) | Git, `cp` e `rm` sempre in T5 (prompt `[stregatto@archlinux ~]$`) |
+| Traiettoria per `rl_leg_controller` ignorata | inviati i giunti di `fr_leg` (`R1, R3`) | ogni controllore accetta solo i suoi giunti (`rl_leg`: `L2, L4`) |
+| Log di MoveIt senza l'errore cercato | prove fatte prima di avviare il `tee` | avviare il launch con `2>&1 \| tee <file>`, poi ripetere la prova |
+| Crouch di R3/L4 non visibile | da chiarire (vedi punto aperto) | passo 6 |
+
+**Come avviare (robot vero)**
+
+```bash
+# T1, host: controllo USB
+watch -n 0.5 'lsusb | grep -i 303a; echo; ls -l /dev/ttyACM* 2>/dev/null'
+# T2, host: agente (resta acceso), poi RST della scheda se non compare "session established"
+docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4
+# T4, container sesame_idf: log della scheda (uscita con Ctrl+])
+cd /fw
+idf.py -p /dev/ttyACM1 monitor --no-reset
+# T3, container sesame_gpu: controllori (o MoveIt) sul robot vero
+cd /root/ros2_ws
+source install/setup.bash
+export ROS_DOMAIN_ID=0
+ros2 launch sesame_bringup control.launch.py hardware:=real
+# oppure: ros2 launch sesame_bringup moveit.launch.py hardware:=real
+# T6, container sesame_gpu: trotto e controlli
+cd /root/ros2_ws
+source install/setup.bash
+export ROS_DOMAIN_ID=0
+ros2 topic echo --once --qos-reliability best_effort /sesame/joint_echo
+ros2 run sesame_locomotion gait_player --ros-args -p table:=/root/ros2_ws/src/sesameMuhackROS/docs/gait/trot_cycle.csv
+```
+
 **Passi rimanenti della fase**
 
-- Passo 5 — plugin ros2_control `sesame_hardware` (C++, `hardware:=real`): pubblica i comandi, legge
-  l'eco, conversione `servo = 90 + direzione·(angolo − 90) + subtrim` da `calibration/default.yaml`.
-- Passo 6 — calibrazione dei subtrim in stand; verifica: robot sollevato, stand/crouch da RViz/MoveIt
-  uguali alle pose reali, agente fermo → fermo entro 250 ms; poi diario, merge e tag.
+- Passo 6 — prima il punto aperto (R3/L4 vicino a 180°), poi calibrazione dei subtrim in stand e
+  prova di R1 a 10° (fermo a 37°); verifica: robot sollevato, stand/crouch da RViz/MoveIt uguali alle
+  pose reali, agente fermo → fermo entro 250 ms; poi diario, merge e tag.

@@ -7,8 +7,8 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 
 ## Repository e accesso (fallo come prima cosa)
 - Repo ROS 2: **Stregatto888/Sesame_ROS2** (privato, branch `main`, un branch `feature/...` per fase).
-- Repo firmware ESP32: **Stregatto888/Sesame_MuHack** (branch `develop`; per il ponte ROS si userà
-  `feature/ros-bridge`).
+- Repo firmware ESP32: **Stregatto888/Sesame_MuHack** (branch `develop`; il ponte ROS è sul branch
+  `feature/ros-bridge`, build ESP-IDF). Sull'host: `~/workspace/hardware/Sesame_MuHack`.
 - All'inizio della chat aggiungi entrambe le repo alla sessione (strumento add_repo, accesso in lettura)
   e leggi `docs/progresso.md` di Sesame_ROS2: è il diario aggiornato delle fasi e la fonte di verità.
   Se l'accesso viene rifiutato, dimmelo con il motivo esatto e chiedimi di incollare i file.
@@ -37,8 +37,9 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
   | T5 | host | `[stregatto@archlinux ...]$` | Git, `cp` dai Download, editor |
 
   Git e `cp` sempre in T5. `sesame_gpu` usa la rete dell'host (prompt `root@archlinux`).
-- Container di build firmware `sesame_idf` (`espressif/idf:release-v5.5`, `--privileged -v /dev:/dev`,
-  `~/workspace/hardware/microros_test` montata in `/work`; rientro `docker start -ai sesame_idf`).
+- Container di build firmware `sesame_idf` (immagine `sesame_idf:passo2`, da `espressif/idf:release-v5.5`,
+  `--privileged -v /dev:/dev`; `~/workspace/hardware/microros_test` in `/work`,
+  `~/workspace/hardware/Sesame_MuHack` in `/fw`; rientro `docker start -ai sesame_idf`, poi `cd /fw`).
   Agente micro-ROS sull'host con l'immagine `microros/micro-ros-agent:jazzy` (`--net=host`, `/dev/shm`
   condiviso): resta acceso tra un reset e l'altro della scheda e si riaggancia da solo.
 - Flash della S2: modalità download con 0 tenuto + RST, poi `idf.py -p /dev/ttyACM0 flash`
@@ -59,8 +60,10 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 - Fase 4 (trotto in simulazione: IK su (x, z), tabella di un ciclo a 50 Hz, controlli su limiti,
   velocità e passo per tick, riproduzione in RViz) ✅ tag `v0.5-gait`.
 - **In corso: fase 5, ESP32 e ponte ROS con micro-ROS** (piano A, scelto il 15/11/2026: componente
-  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC). Passi 1–2 ✅: esempio USB CDC
-  compilato, flashato e letto da ROS 2 tramite l'agente. Prossimo: passo 3 (interfaccia e build).
+  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC). Passi 1–3 ✅: firmware compilato con
+  ESP-IDF 5.5 + Arduino 3.3.12 come componente, micro-ROS dentro il firmware (`ttyACM0` micro-ROS,
+  `ttyACM1` log), decisioni su interfaccia, sicurezze, modalità e memoria. Prossimo: passo 4 (firmware
+  in modalità ROS), poi 5 (plugin `sesame_hardware`) e 6 (calibrazione e verifica).
 
 ## Struttura
 - `sesame_description`: `urdf/sesame.urdf` (originale, non si modifica), `sesame.urdf.xacro` (radice
@@ -97,8 +100,12 @@ Pose SRDF: `stand` e `crouch` (ginocchia rientrate di 30°).
 - Stand (°): R1 135, R2 45, L1 45, L2 135, R4 0, R3 180, L3 0, L4 180. Crouch: R3 150, R4 30, L3 30, L4 150.
 - Posa di partenza del trotto (°): R1 105, R2 75, L1 75, L2 105, R4 45, R3 135, L3 45, L4 135.
 - Limiti (°): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
-- Servo: 50 Hz, impulso 732–2929 µs. Sicurezza: passo massimo 12° e timeout 250 ms come valori di partenza;
-  primo test sempre con il robot sollevato.
+- Servo: 50 Hz, impulso 732–2929 µs. Sicurezza nel firmware: limiti per giunto, passo massimo 12° ogni
+  20 ms, watchdog 250 ms (fermo nella posa corrente); primo test sempre con il robot sollevato.
+- micro-ROS: nodo `sesame_esp32`, `ROS_DOMAIN_ID` 0, best-effort; `/sesame/joint_commands` e
+  `/sesame/joint_echo` (`std_msgs/Float32MultiArray`, 8 valori in ordine firmware, gradi del servo).
+  Conversione e subtrim solo nel plugin. Modalità WEB all'avvio, ROS dal primo comando, `mode web` dal
+  terminale web per tornare.
 
 ## Roadmap rimanente (ogni fase finisce con un controllo verificabile)
 5. **ESP32 e ponte ROS con micro-ROS (piano A)**:

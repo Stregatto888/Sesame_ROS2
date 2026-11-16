@@ -11,7 +11,7 @@ piano per ora.
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
 | 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
-| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–2 ✅) | |
+| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–3 ✅) | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -337,6 +337,9 @@ ros2 run sesame_locomotion gait_player --ros-args -p table:=$D/trot_cycle.csv
 - Posa crouch (gradi): anche come stand, R3 150, R4 30, L3 30, L4 150.
 - Limiti (gradi): R1 45–180, R2 0–135, L1 0–135, L2 45–180, R4/R3/L3/L4 0–180.
 - Segnale servo: 50 Hz, impulso 732–2929 µs.
+- Interfaccia micro-ROS (fase 5): nodo `sesame_esp32`, `ROS_DOMAIN_ID` 0, QoS best-effort;
+  `/sesame/joint_commands` (PC → ESP32) e `/sesame/joint_echo` (ESP32 → PC, 50 Hz), entrambi
+  `std_msgs/Float32MultiArray` con 8 valori in ordine firmware, in gradi del servo (decimali).
 
 ## Prossimo passo: fase 5 — ESP32 e ponte ROS con micro-ROS
 
@@ -411,11 +414,97 @@ ros2 topic echo /esp32s2/int32_publisher_usbcdc
 idf.py -p /dev/ttyACM1 monitor --no-reset
 ```
 
-**Lavoro della fase**
+**Passo 3 — build ESP-IDF, micro-ROS nel firmware, decisioni (16/11/2026)** ✅
 
-- Firmware (`Sesame_MuHack`, branch `feature/ros-bridge` da `develop`): task micro-ROS, driver servo
-  non bloccante a 50 Hz, limiti per giunto, passo massimo 12° per tick, watchdog 250 ms (senza comandi
-  → si ferma nella posa corrente), eco degli angoli, riconnessione all'agente.
-- Plugin ros2_control `sesame_hardware` (attivato da `hardware:=real`), ordine giunti firmware e
-  conversione `servo = 90 + direzione·(angolo − 90) + subtrim`.
-- Calibrare i subtrim; primo test sempre con il robot sollevato, poi la tabella `docs/gait/trot_cycle.csv`.
+Firmware `Sesame_MuHack`: prima `develop` riallineato (commit locale 89c3d3f "servo names (R1-L4)"
+unito con merge `83bc277`), poi branch `feature/ros-bridge` da `develop`.
+
+- 3a, commit `25fed30`: progetto ESP-IDF 5.5 nella radice del firmware, stessi `src/` e `include/`.
+  - `CMakeLists.txt` (`MINIMAL_BUILD`, `PROJECT_VER` fisso: niente Git nel container), `main/`
+    (sorgenti da `../src`), `main/idf_component.yml` (`espressif/arduino-esp32 ==3.3.12`),
+    `sdkconfig.defaults` (autostart Arduino, tick 1000 Hz, 4 MB, PSRAM, `-Os`), `partitions.csv`
+    (= `huge_app.csv`).
+  - Librerie come sottomoduli in `components/<nome>/` con un nostro `CMakeLists.txt`: ESP32Servo 3.2.1,
+    Adafruit BusIO 1.17.4, GFX 1.13.0, SSD1306 2.5.17.
+  - Arduino non usa la USB (`ARDUINO_USB_CDC_ON_BOOT` non definito): `Serial` va su UART0, che sulla
+    Lolin S2 Mini non è sui pin. La CLI seriale è quindi già spenta.
+- 3b, commit `9d44f6b`: micro-ROS dentro il firmware.
+  - Sottomodulo `components/micro_ros_espidf_component` (branch `jazzy`, `5cd71f5`); componenti
+    `esp_usbcdc_transport` e `esp_usbcdc_logging` presi dall'esempio nel sottomodulo
+    (`EXTRA_COMPONENT_DIRS`); `esp_tinyusb` 1.7.6~2; `app-colcon.meta` con trasporto custom.
+  - `src/ros/ros_bridge.cpp`: 2 porte CDC (`ttyACM0` micro-ROS, `ttyACM1` log), task `TaskRos`,
+    riconnessione automatica all'agente, log della memoria ogni 5 s.
+  - `esp_tinyusb` attiva `CONFIG_TINYUSB_CDC_ENABLED` e Arduino compilerebbe `cores/esp32/USBCDC.cpp`
+    (richiede lo stack USB di Arduino, assente): escluso dal `CMakeLists.txt` principale con
+    `HEADER_FILE_ONLY`, senza toccare il componente.
+  - WiFi e lwIP fuori dalla IRAM (`CONFIG_ESP_WIFI_IRAM_OPT=n`, `..._RX_IRAM_OPT=n`,
+    `CONFIG_LWIP_IRAM_OPTIMIZATION=n`): sulla S2 IRAM e DRAM sono la stessa memoria.
+- Container `sesame_idf` ricreato da `docker commit` (immagine `sesame_idf:passo2`) con in più
+  `~/workspace/hardware/Sesame_MuHack` montata in `/fw`; `/work` invariata.
+
+| Verifica | Esito |
+|---|---|
+| 3a: `idf.py build` | app 1,06 MB su 3 MB; DIRAM 79,8% |
+| 3a: flash e prova (robot sollevato) | OLED, AP `Sesame MuHack`, portale, tutte le pose, `R1 90` dal terminale web; nessun `303a` su USB |
+| 3b: `idf.py build` | app 1,13 MB su 3 MB; DIRAM 75,2% |
+| 3b: USB dopo il reset | `303a:4002`, `ttyACM0` + `ttyACM1` |
+| 3b: agente + `ros2 topic echo /sesame/heartbeat` (`ROS_DOMAIN_ID=0`) | sessione stabilita, `data` +1 al secondo |
+| 3b: agente fermato e riavviato; RST della scheda | `agente perso`, poi `agente collegato` senza RST; dopo RST si ricollega da sola |
+| 3b: pose dal web con micro-ROS collegato | funzionano, il heartbeat non si interrompe |
+| 3b: memoria (collegato) | heap interno libero ~55 KB, minimo 8,3 KB con il web in uso (24,6 KB senza); PSRAM quasi inutilizzata; stack `TaskRos` usato ~3 KB su 16 |
+
+**Decisioni del passo 3**
+
+1. Build: `idf.py` in `sesame_idf`, ESP-IDF 5.5, Arduino 3.3.12 e micro-ROS `jazzy` come componenti a
+   versione fissata; su `feature/ros-bridge` PlatformIO non compila più (ripiego: `develop` con
+   `pio run -t upload`).
+2. Interfaccia: nodo `sesame_esp32`, `ROS_DOMAIN_ID` 0; `/sesame/joint_commands` e `/sesame/joint_echo`,
+   `std_msgs/Float32MultiArray`, 8 valori in ordine firmware in gradi del servo, best-effort, 50 Hz.
+3. Conversione e sicurezze: conversione e subtrim solo nel plugin (in modalità ROS il firmware ignora
+   `Motors::subtrim`); servo scritti in µs con i decimali; nel firmware limiti per giunto, passo massimo
+   12° ogni 20 ms, watchdog 250 ms → fermo nella posa corrente con i servo alimentati
+   (`disable_timeout_ms` di `default.yaml` non usato); eco = angoli effettivamente scritti. All'avvio
+   i servo vanno a 90° come oggi: il plugin parte dalla posa letta dall'eco e il passo massimo evita
+   scatti.
+4. Modalità e memoria: modalità WEB all'avvio, ROS dal primo comando ROS valido (pose e servo dal web
+   rifiutati); ritorno a WEB solo con `mode web` dal terminale web dopo 1 s senza comandi ROS, oppure
+   riavvio. Allocazioni da 4 KB in su in PSRAM; stack di `TaskRos` 10 KB; trasporto nostro che
+   installa TinyUSB una volta sola.
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| HEAD staccato su Sesame_MuHack con commit 89c3d3f mai pubblicato e modifiche non salvate | lavoro locale di aprile | branch `salvataggio/servo-names`, stash della sola formattazione, merge in `develop` |
+| `tar: Cannot open` | archivio non scaricato dopo aver riaperto la sessione | riscaricarlo in `~/Downloads` |
+| `+` in `git submodule status` | commit fissato con `checkout` ma non registrato | `git add` del percorso del sottomodulo |
+| `/fw` assente in `sesame_idf` | i montaggi si decidono alla creazione del container | `docker commit` + nuovo `docker run` con `-v ~/workspace/hardware/Sesame_MuHack:/fw` |
+| `idf.py: command not found` | `exit` dal container, comando lanciato sull'host | `docker start -ai sesame_idf`, `cd /fw` |
+| `usb_phy: selected PHY is in use` in attesa dell'agente | il trasporto dell'esempio reinstalla TinyUSB a ogni tentativo | trasporto nostro nel passo 4 |
+| Minimo di heap interno 8,3 KB | allocazioni del web sotto 16 KB tutte in RAM interna | soglia PSRAM a 4 KB (passo 4) |
+
+**Come avviare (firmware)**
+
+```bash
+# T4, host → container sesame_idf
+docker start -ai sesame_idf
+cd /fw
+idf.py build
+# scheda in download (tieni 0, premi RST, rilascia 0), poi:
+idf.py -p /dev/ttyACM0 flash
+# log della scheda (uscita con Ctrl+])
+idf.py -p /dev/ttyACM1 monitor --no-reset
+# T2, host: agente
+docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4
+```
+
+**Passi rimanenti della fase**
+
+- Passo 4 — firmware in modalità ROS (`Sesame_MuHack`, `feature/ros-bridge`): sottoscrizione ai comandi,
+  eco a 50 Hz, scrittura non bloccante in µs, limiti, passo massimo 12°, watchdog 250 ms, modalità
+  WEB/ROS, trasporto con TinyUSB installato una volta, soglia PSRAM. Prova con `ros2 topic pub`, robot
+  sollevato.
+- Passo 5 — plugin ros2_control `sesame_hardware` (C++, `hardware:=real`): pubblica i comandi, legge
+  l'eco, conversione `servo = 90 + direzione·(angolo − 90) + subtrim` da `calibration/default.yaml`.
+- Passo 6 — calibrazione dei subtrim in stand; verifica: robot sollevato, stand/crouch da RViz/MoveIt
+  uguali alle pose reali, agente fermo → fermo entro 250 ms; poi diario, merge e tag.

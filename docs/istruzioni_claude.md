@@ -60,10 +60,11 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 - Fase 4 (trotto in simulazione: IK su (x, z), tabella di un ciclo a 50 Hz, controlli su limiti,
   velocità e passo per tick, riproduzione in RViz) ✅ tag `v0.5-gait`.
 - **In corso: fase 5, ESP32 e ponte ROS con micro-ROS** (piano A, scelto il 15/11/2026: componente
-  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC). Passi 1–3 ✅: firmware compilato con
+  micro-ROS per ESP-IDF sulla Lolin S2 Mini, trasporto USB CDC). Passi 1–4 ✅: firmware compilato con
   ESP-IDF 5.5 + Arduino 3.3.12 come componente, micro-ROS dentro il firmware (`ttyACM0` micro-ROS,
-  `ttyACM1` log), decisioni su interfaccia, sicurezze, modalità e memoria. Prossimo: passo 4 (firmware
-  in modalità ROS), poi 5 (plugin `sesame_hardware`) e 6 (calibrazione e verifica).
+  `ttyACM1` log), decisioni su interfaccia, sicurezze, modalità e memoria, firmware in modalità ROS
+  verificato con `ros2 topic pub` (Sesame_MuHack `feature/ros-bridge`, commit `6325c58`).
+  Prossimo: passo 5 (plugin `sesame_hardware`), poi 6 (calibrazione dei subtrim e verifica finale).
 
 ## Struttura
 - `sesame_description`: `urdf/sesame.urdf` (originale, non si modifica), `sesame.urdf.xacro` (radice
@@ -81,8 +82,12 @@ ed eseguita dall'ESP32 sui servo. Fisica (Gazebo/MuJoCo) e machine learning sono
 - `docs/ik/` (CSV delle verifiche della fase 3), `docs/gait/trot_cycle.csv` (un ciclo di trotto,
   colonne `t_s` + giunti in ordine firmware, gradi) e `docs/gait/gait_planner.txt`.
 - `tools/joint_degrees.py`: `/joint_states` → gradi in ordine firmware e valore servo.
-- Da creare: `sesame_hardware` (fase 5, plugin ros2_control che parla con l'ESP32 tramite i topic
-  micro-ROS) e il `micro_ros_agent` nel container.
+- Da creare: `sesame_hardware` (fase 5, passo 5): plugin ros2_control in C++
+  `sesame_hardware/SesameSystemHardware` (già indicato nello xacro con `hardware:=real`). Pubblica
+  `/sesame/joint_commands` e legge `/sesame/joint_echo` (best-effort, `std_msgs/Float32MultiArray`,
+  8 valori in ordine firmware, gradi del servo); converte URDF (rad) ↔ servo (gradi) con direzione e
+  subtrim di `calibration/default.yaml`; all'attivazione parte dalla posa letta dall'eco. L'agente
+  micro-ROS resta sull'host (immagine `microros/micro-ros-agent:jazzy`, terminale T2).
 
 ## Gruppi, giunti, controllori
 | Gruppo | Catena | Giunti | Controllore |
@@ -161,7 +166,7 @@ Pose SRDF: `stand` e `crouch` (ginocchia rientrate di 30°).
   non usa servizi ROS nel ciclo.
 
 ## Come lavorare con me
-- Procedi una fase alla volta e dimmi sempre in quale terminale (T1/T2/T3) eseguire ogni comando.
+- Procedi una fase alla volta e dimmi sempre in quale terminale (T1–T5 nella fase 5) eseguire ogni comando.
 - Il codice più lungo di poche righe dammelo come file pronto da copiare, con il percorso di destinazione.
 - Quando ti incollo un errore, prima la causa, poi la correzione minima.
 - A fine fase aggiorna `docs/progresso.md` (stesso stile: file nuovi, verifiche, problemi incontrati in

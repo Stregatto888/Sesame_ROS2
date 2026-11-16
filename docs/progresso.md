@@ -11,7 +11,7 @@ piano per ora.
 | 2 | MoveIt 2 (4 gruppi gamba, pick_ik) | ✅ fatta | `v0.3-moveit` |
 | 3 | IK verificata (andata e ritorno, marker) | ✅ fatta | `v0.4-ik` |
 | 4 | Andatura in simulazione (trotto) | ✅ fatta | `v0.5-gait` |
-| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–3 ✅) | |
+| 5 | ESP32 e ponte ROS con micro-ROS (`sesame_hardware`) | 🔄 in corso (passi 1–4 ✅) | |
 | 6 | IK sul robot fisico | da fare | |
 
 ---
@@ -498,12 +498,70 @@ idf.py -p /dev/ttyACM1 monitor --no-reset
 docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4
 ```
 
+**Passo 4 — firmware in modalità ROS (16/11/2026)** ✅
+
+Firmware `Sesame_MuHack`, branch `feature/ros-bridge`, commit `6325c58`.
+
+**File nuovi o modificati**
+
+- `include/core/mode.h`, `src/core/mode.cpp`: modalità WEB (all'avvio) / ROS (dal primo comando ROS
+  valido). `Mode::requestWeb()` torna a WEB solo dopo 1 s senza comandi ROS.
+- `include/motors/servo_driver.h`, `src/motors/servo_driver.cpp`: `writeDegrees()` (scrittura immediata
+  in µs con i decimali, senza subtrim né attese), `lastAngle()` (ultimo angolo scritto, anche dal web);
+  in modalità ROS `setAngle()` non muove i servo.
+- `src/core/tasks.cpp`: in modalità ROS `TaskMotor` scarta i comandi di posa.
+- `src/web/web_server.cpp`: comandi `mode` e `mode web` nel terminale web, modalità in `status`; in
+  modalità ROS i comandi di movimento sono rifiutati.
+- `include/core/config.h`: limiti dei giunti (gradi del servo, ordine firmware) e parametri
+  `ROS_CONTROL_PERIOD_MS` 20, `ROS_MAX_STEP_DEG` 12, `ROS_COMMAND_TIMEOUT_MS` 250, `ROS_IDLE_FOR_WEB_MS` 1000.
+- `src/ros/ros_bridge.cpp`, `include/ros/ros_bridge.h`: sottoscrizione `/sesame/joint_commands` e
+  pubblicazione `/sesame/joint_echo` (best-effort, 50 Hz); ciclo a 50 Hz in `TaskRos` con limiti, passo
+  massimo e watchdog; trasporto USB nostro (TinyUSB installato una sola volta, porta lasciata aperta);
+  agente perso dopo 3 ping falliti; stato ogni 5 s su `ttyACM1` (modalità, comandi ricevuti, scartati e
+  limitati, memoria). Stack di `TaskRos` 10 KB.
+- `sdkconfig.defaults`: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`, `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`.
+
+**Verifiche superate** (robot sollevato)
+
+| Verifica | Esito |
+|---|---|
+| `idf.py build` | immagine 1,17 MB su 3 MB; DIRAM 77,3% |
+| Eco `/sesame/joint_echo` | 8 valori in ordine firmware = angoli scritti |
+| Un solo comando (`--once`) | ogni servo si sposta al massimo di 12°, poi watchdog |
+| Stand, crouch, posa di partenza del trotto a 50 Hz | movimenti fluidi, log `modo ROS` senza `fermo` |
+| R1 a 10° | fermo a 45° (limite), log `fuori dai limiti` |
+| Comando con 2 valori | scartato, nessun movimento |
+| Stop dei comandi (Ctrl+C sul `ros2 topic pub`) | `watchdog` dopo 240 ms, robot fermo nella posa |
+| Agente fermato con i comandi in corso | `watchdog` subito, `agente perso` dopo ~2,5 s; agente riavviato → si ricollega e riprende i comandi |
+| Terminale web in modalità ROS | pose e `R1 90` rifiutati; `mode web` rifiutato con comandi in arrivo, accettato dopo 1 s |
+| Memoria con telefono collegato e pagina web in uso | heap interno minimo 29,4 KB (prima 8,2 KB); PSRAM usata ~16 KB; stack `TaskRos` usato ~2,3 KB su 10 |
+
+**Problemi incontrati**
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| `modo ROS fermo` con i comandi in arrivo, servo a scatti | l'ora del ciclo era letta prima dell'executor: il comando risultava 1 ms "nel futuro" e la differenza senza segno diventava enorme, quindi scattava il watchdog | ora riletta in `controlTick()` e differenza con segno |
+| Heap interno minimo 8 KB con la pagina web | i buffer di trasmissione di WiFi e lwIP stanno per default solo nella RAM interna | `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` |
+| `mode web` accettato e agente fermato senza effetto, in una prova | in quel momento i comandi non arrivavano (contatore `comandi` fermo) | prima di ogni prova controllare che il contatore salga di ~250 ogni 5 s |
+| Opzioni nuove di `sdkconfig.defaults` non applicate | `sdkconfig` già esistente | `idf.py set-target esp32s2` (rigenera `sdkconfig`) quando cambia `sdkconfig.defaults` |
+
+**Come provare il firmware in modalità ROS**
+
+```bash
+# T2, host: agente
+docker run -it --rm -v /dev:/dev -v /dev/shm:/dev/shm --privileged --net=host microros/micro-ros-agent:jazzy serial --dev /dev/ttyACM0 -v4
+# T4, container sesame_idf: log della scheda (uscita con Ctrl+])
+cd /fw
+idf.py -p /dev/ttyACM1 monitor --no-reset
+# T3, container sesame_gpu (ROS_DOMAIN_ID 0)
+export ROS_DOMAIN_ID=0
+ros2 topic echo --once --qos-reliability best_effort /sesame/joint_echo
+ros2 topic pub --rate 50 /sesame/joint_commands std_msgs/msg/Float32MultiArray "{data: [135.0, 45.0, 45.0, 135.0, 0.0, 180.0, 0.0, 180.0]}"
+# terminale web: status, mode, mode web
+```
+
 **Passi rimanenti della fase**
 
-- Passo 4 — firmware in modalità ROS (`Sesame_MuHack`, `feature/ros-bridge`): sottoscrizione ai comandi,
-  eco a 50 Hz, scrittura non bloccante in µs, limiti, passo massimo 12°, watchdog 250 ms, modalità
-  WEB/ROS, trasporto con TinyUSB installato una volta, soglia PSRAM. Prova con `ros2 topic pub`, robot
-  sollevato.
 - Passo 5 — plugin ros2_control `sesame_hardware` (C++, `hardware:=real`): pubblica i comandi, legge
   l'eco, conversione `servo = 90 + direzione·(angolo − 90) + subtrim` da `calibration/default.yaml`.
 - Passo 6 — calibrazione dei subtrim in stand; verifica: robot sollevato, stand/crouch da RViz/MoveIt

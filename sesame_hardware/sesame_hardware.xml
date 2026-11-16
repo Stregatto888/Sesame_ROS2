@@ -1,0 +1,10 @@
+<library path="sesame_hardware">
+  <class name="sesame_hardware/SesameSystemHardware"
+         type="sesame_hardware::SesameSystemHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Sesame (8 servo) via micro-ROS: pubblica /sesame/joint_commands e legge /sesame/joint_echo
+      (std_msgs/Float32MultiArray, ordine firmware, gradi del servo).
+    </description>
+  </class>
+</library>

@@ -1,8 +1,15 @@
 """sesame_bringup/launch/moveit.launch.py
 
-Fase 2: ros2_control (hardware finto, i nostri 4 controllori) + move_group + RViz con MotionPlanning.
-Il robot_description viene dal NOSTRO xacro, così c'è una sola fonte di verità
-(e in fase 5 basterà hardware:=real).
+Fase 2: ros2_control (i nostri 4 controllori) + move_group + RViz con MotionPlanning.
+Il robot_description viene dal NOSTRO xacro, così c'è una sola fonte di verità.
+
+Uso:
+  ros2 launch sesame_bringup moveit.launch.py                  # hardware finto
+  ros2 launch sesame_bringup moveit.launch.py hardware:=real   # ESP32 (fase 5)
+
+L'argomento hardware arriva a control.launch.py, cioè al controller_manager.
+move_group e RViz usano l'URDF generato con hardware:=mock: il blocco
+ros2_control non conta per MoveIt, giunti e limiti sono gli stessi.
 """
 import os
 
@@ -10,6 +17,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
@@ -35,7 +43,7 @@ def generate_launch_description():
     # Fase 1 così com'è, ma senza il suo RViz (usiamo quello di MoveIt)
     control = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(bringup_share, "launch", "control.launch.py")),
-        launch_arguments={"rviz": "false"}.items(),
+        launch_arguments={"rviz": "false", "hardware": LaunchConfiguration("hardware")}.items(),
     )
 
     move_group = Node(
@@ -59,4 +67,10 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription([control, move_group, rviz])
+    return LaunchDescription([
+        DeclareLaunchArgument("hardware", default_value="mock",
+                              description="mock | real (real: ESP32 con micro-ROS, fase 5)"),
+        control,
+        move_group,
+        rviz,
+    ])

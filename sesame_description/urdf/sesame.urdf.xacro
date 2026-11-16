@@ -9,7 +9,7 @@
 
   Argomenti:
     hardware:=mock   giunti simulati (mock_components/GenericSystem)  [default]
-    hardware:=real   riservato alla fase 5 (interfaccia verso l'ESP32)
+    hardware:=real   ESP32 con micro-ROS (plugin sesame_hardware, fase 5)
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="sesame_quadruped">
 

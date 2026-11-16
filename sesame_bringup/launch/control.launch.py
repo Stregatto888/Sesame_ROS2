@@ -4,6 +4,7 @@ controllori delle 4 gambe e RViz.
 Uso:
   ros2 launch sesame_bringup control.launch.py                 # hardware finto
   ros2 launch sesame_bringup control.launch.py rviz:=false
+  ros2 launch sesame_bringup control.launch.py hardware:=real   # ESP32 (fase 5)
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -70,7 +71,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('hardware', default_value='mock',
-                              description='mock | real (real: fase 5)'),
+                              description='mock | real (real: ESP32 con micro-ROS, fase 5)'),
         DeclareLaunchArgument('rviz', default_value='true'),
         robot_state_publisher,
         controller_manager,

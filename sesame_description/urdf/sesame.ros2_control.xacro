@@ -4,20 +4,39 @@
   Ogni giunto ha un comando di posizione e stati di posizione e velocita'.
   initial_value = posa "stand" (gradi del servo = angolo URDF):
     R1 135, R2 45, L1 45, L2 135, R4 0, R3 180, L3 0, L4 180
+
+  hardware:=real (fase 5): plugin sesame_hardware/SesameSystemHardware.
+  I parametri del plugin vengono da calibration/default.yaml, letto qui con
+  xacro.load_yaml: il file resta l'unica fonte di ordine firmware, direzione,
+  subtrim e limiti.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:macro name="sesame_joint" params="name initial">
+  <xacro:macro name="sesame_joint" params="name initial hardware cal:=None">
     <joint name="${name}">
       <command_interface name="position"/>
       <state_interface name="position">
         <param name="initial_value">${initial}</param>
       </state_interface>
       <state_interface name="velocity"/>
+      <xacro:if value="${hardware == 'real'}">
+        <param name="firmware_index">${cal['joint_order'].index(name)}</param>
+        <param name="direction">${cal['direction'][name]}</param>
+        <param name="subtrim_degrees">${cal['subtrim_degrees'][name]}</param>
+        <param name="min_degrees">${cal['limits_degrees'][name][0]}</param>
+        <param name="max_degrees">${cal['limits_degrees'][name][1]}</param>
+      </xacro:if>
     </joint>
   </xacro:macro>
 
   <xacro:macro name="sesame_ros2_control" params="hardware">
+    <xacro:property name="cal" value="${None}"/>
+    <xacro:if value="${hardware == 'real'}">
+      <xacro:property name="calibration_file"
+                      value="$(find sesame_description)/calibration/default.yaml"/>
+      <xacro:property name="cal" value="${xacro.load_yaml(calibration_file)}"/>
+    </xacro:if>
+
     <ros2_control name="SesameSystem" type="system">
 
       <hardware>
@@ -26,23 +45,33 @@
           <param name="calculate_dynamics">false</param>
         </xacro:if>
         <xacro:if value="${hardware == 'real'}">
-          <!-- Fase 5: plugin sesame_hardware/SesameSystemHardware -->
+          <!-- Fase 5: ponte verso l'ESP32 (topic micro-ROS) -->
           <plugin>sesame_hardware/SesameSystemHardware</plugin>
+          <param name="command_topic">/sesame/joint_commands</param>
+          <param name="echo_topic">/sesame/joint_echo</param>
+          <!-- attesa massima della prima eco all'attivazione -->
+          <param name="activate_timeout_ms">2000</param>
+          <!-- eco piu' vecchia di cosi' = avviso (stesso valore del watchdog del firmware) -->
+          <param name="echo_timeout_ms">${cal['safety']['action_timeout_ms']}</param>
+          <param name="maximum_subtrim_degrees">${cal['safety']['maximum_subtrim_degrees']}</param>
+          <!-- campo del servo: 0-180 gradi = impulso 732-2929 us -->
+          <param name="servo_min_degrees">0</param>
+          <param name="servo_max_degrees">180</param>
         </xacro:if>
       </hardware>
 
       <!-- Gamba anteriore destra -->
-      <xacro:sesame_joint name="R1" initial="${135*pi/180}"/>
-      <xacro:sesame_joint name="R3" initial="${180*pi/180}"/>
+      <xacro:sesame_joint name="R1" initial="${135*pi/180}" hardware="${hardware}" cal="${cal}"/>
+      <xacro:sesame_joint name="R3" initial="${180*pi/180}" hardware="${hardware}" cal="${cal}"/>
       <!-- Gamba posteriore destra -->
-      <xacro:sesame_joint name="R2" initial="${45*pi/180}"/>
-      <xacro:sesame_joint name="R4" initial="${0*pi/180}"/>
+      <xacro:sesame_joint name="R2" initial="${45*pi/180}" hardware="${hardware}" cal="${cal}"/>
+      <xacro:sesame_joint name="R4" initial="${0*pi/180}" hardware="${hardware}" cal="${cal}"/>
       <!-- Gamba anteriore sinistra -->
-      <xacro:sesame_joint name="L1" initial="${45*pi/180}"/>
-      <xacro:sesame_joint name="L3" initial="${0*pi/180}"/>
+      <xacro:sesame_joint name="L1" initial="${45*pi/180}" hardware="${hardware}" cal="${cal}"/>
+      <xacro:sesame_joint name="L3" initial="${0*pi/180}" hardware="${hardware}" cal="${cal}"/>
       <!-- Gamba posteriore sinistra -->
-      <xacro:sesame_joint name="L2" initial="${135*pi/180}"/>
-      <xacro:sesame_joint name="L4" initial="${180*pi/180}"/>
+      <xacro:sesame_joint name="L2" initial="${135*pi/180}" hardware="${hardware}" cal="${cal}"/>
+      <xacro:sesame_joint name="L4" initial="${180*pi/180}" hardware="${hardware}" cal="${cal}"/>
 
     </ros2_control>
   </xacro:macro>

@@ -21,5 +21,9 @@ pwm:
 safety:
   maximum_speed_degrees_s: 600
   maximum_step_degrees: 12
+  # |subtrim| massimo accettato dal plugin: uguale a ROS_LIMIT_MARGIN_DEG del firmware.
+  # Una squadretta a 25 denti si sposta di 14,4° per dente: con il rimontaggio ogni
+  # scarto rientra in ±7,2°.
+  maximum_subtrim_degrees: 8
   action_timeout_ms: 250
   disable_timeout_ms: 1000
